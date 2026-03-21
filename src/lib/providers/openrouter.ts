@@ -1,6 +1,6 @@
 import { appConfig, env } from "@/lib/config/env";
 import { logError } from "@/lib/observability/logger";
-import type { VoiceCallMatch } from "@/lib/types";
+import type { TranscriptTurn, VoiceCallMatch } from "@/lib/types";
 
 interface ComposeGroundedVoiceReplyInput {
   callerTranscript: string;
@@ -10,6 +10,7 @@ interface ComposeGroundedVoiceReplyInput {
   actionSummary: string;
   requiresHandoff: boolean;
   matches: VoiceCallMatch[];
+  recentTurns: TranscriptTurn[];
 }
 
 interface OpenRouterChatCompletionResponse {
@@ -67,11 +68,12 @@ export async function composeGroundedVoiceReply(
           {
             role: "system",
             content:
-              "You write short phone-call replies for a business voice agent. Use only the provided facts. Never invent missing prices, stock, delivery times, or availability. Keep the reply under two short sentences. If handoff is required, say so clearly and briefly.",
+              "You write short phone-call replies for a business voice agent. Use only the provided facts. Never invent missing prices, stock, delivery times, availability, policy terms, or booking details. Keep the reply under two short sentences, ask at most one follow-up question, and sound calm and businesslike. If handoff is required, say so clearly and briefly.",
           },
           {
             role: "user",
             content: JSON.stringify({
+              conversationContext: input.recentTurns.slice(-4),
               callerTranscript: input.callerTranscript,
               intent: input.intent,
               trustedSources: input.trustedSources,

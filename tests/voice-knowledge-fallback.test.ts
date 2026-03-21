@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { clearAllVoiceSessions } from "@/lib/voice/session-state";
+
 const retrieveKnowledgeMatches = vi.fn();
 
 vi.mock("@/lib/repositories/knowledge-base", () => ({
@@ -41,6 +43,7 @@ vi.mock("@/lib/providers/openrouter", () => ({
 
 describe("voice knowledge fallback", () => {
   beforeEach(() => {
+    clearAllVoiceSessions();
     retrieveKnowledgeMatches.mockReset();
   });
 

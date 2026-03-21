@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { simulateInboundVoiceCall } from "@/lib/voice/pipeline";
+import { clearAllVoiceSessions } from "@/lib/voice/session-state";
+
+beforeEach(() => {
+  clearAllVoiceSessions();
+});
 
 describe("simulateInboundVoiceCall", () => {
   it("grounds product searches against structured catalog matches", async () => {
@@ -94,5 +99,51 @@ describe("simulateInboundVoiceCall", () => {
     expect(result.outcome).toBe("lead-captured");
     expect(result.requiresHandoff).toBe(false);
     expect(result.leadId).toBeTruthy();
+  });
+
+  it("uses session memory for product follow-up questions", async () => {
+    await simulateInboundVoiceCall({
+      tenantId: "atelier-workspace",
+      channel: "phone",
+      caller: "Lena Frost",
+      callId: "CA-followup-1",
+      transcript: "Do you have black office chairs under 300 euros?",
+    });
+
+    const result = await simulateInboundVoiceCall({
+      tenantId: "atelier-workspace",
+      channel: "phone",
+      caller: "Lena Frost",
+      callId: "CA-followup-1",
+      transcript: "Tell me more about the second one.",
+    });
+
+    expect(result.intent).toBe("product-inquiry");
+    expect(result.outcome).toBe("resolved");
+    expect(result.responseText).toContain("Pivot Black Office Chair");
+    expect(result.responseText).toContain("289");
+  });
+
+  it("uses session memory to confirm a previously offered slot", async () => {
+    await simulateInboundVoiceCall({
+      tenantId: "atelier-workspace",
+      channel: "phone",
+      caller: "Noah Vale",
+      callId: "CA-booking-1",
+      transcript: "I want to book a consultation for next week.",
+    });
+
+    const result = await simulateInboundVoiceCall({
+      tenantId: "atelier-workspace",
+      channel: "phone",
+      caller: "Noah Vale",
+      callId: "CA-booking-1",
+      transcript: "Thursday works for me.",
+    });
+
+    expect(result.intent).toBe("booking");
+    expect(result.outcome).toBe("booked");
+    expect(result.requiresHandoff).toBe(false);
+    expect(result.responseText).toContain("Thursday");
   });
 });

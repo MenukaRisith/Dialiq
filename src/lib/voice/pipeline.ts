@@ -17,6 +17,12 @@ import {
   loadVoiceWorkspaceContext,
   persistVoiceOutcome,
 } from "@/lib/repositories/workspace-operations";
+import {
+  appendSessionTurns,
+  clearVoiceSession,
+  getVoiceSession,
+  type VoiceSessionOfferedSlot,
+} from "@/lib/voice/session-state";
 import type {
   BookingType,
   CallOutcome,
@@ -49,6 +55,7 @@ const LIVE_DATA_KEYWORDS = /\b(in stock|stock|availability today|ship|shipping|d
 const CRITICAL_PRODUCT_FIELD_KEYWORDS = /\b(price|pricing|cost|how much|under|below|less than|eur|usd|\$|in stock|stock|shipping|delivery|eta|arrive)\b/i;
 const CRITICAL_SERVICE_FIELD_KEYWORDS = /\b(price|pricing|cost|how much|duration|minute|minutes|book|booking|calendar|slot|availability)\b/i;
 const CONFIRMATION_KEYWORDS = /\b(works for me|that works|book it|confirm|yes please|sounds good|go ahead)\b/i;
+const DETAIL_REQUEST_KEYWORDS = /\b(more detail|more details|tell me more|what about|which one|that one|the other one|the second one|the first one|the cheaper one|the more expensive one|what colors|what colour|what features|what does it include)\b/i;
 const SLOT_REFERENCE_KEYWORDS = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i;
 const TIME_REFERENCE_KEYWORDS = /\b(\d{1,2}(:\d{2})?\s?(am|pm)|\d{1,2}:\d{2})\b/i;
 
@@ -60,7 +67,15 @@ function normalizeText(value: string) {
     .trim();
 }
 
-function detectIntent(transcript: string, selectedSlot?: string): IntentType {
+function detectIntent(
+  transcript: string,
+  selectedSlot?: string,
+  context?: {
+    lastIntent?: IntentType;
+    lastMatches?: VoiceCallMatch[];
+    hasOfferedSlots?: boolean;
+  },
+): IntentType {
   if (HANDOFF_KEYWORDS.test(transcript)) {
     return "handoff";
   }
@@ -70,6 +85,15 @@ function detectIntent(transcript: string, selectedSlot?: string): IntentType {
   }
 
   if (BOOKING_KEYWORDS.test(transcript)) {
+    return "booking";
+  }
+
+  if (
+    context?.hasOfferedSlots &&
+    (SLOT_REFERENCE_KEYWORDS.test(transcript) ||
+      TIME_REFERENCE_KEYWORDS.test(transcript) ||
+      CONFIRMATION_KEYWORDS.test(transcript))
+  ) {
     return "booking";
   }
 
@@ -89,7 +113,94 @@ function detectIntent(transcript: string, selectedSlot?: string): IntentType {
     return "lead-capture";
   }
 
+  if (DETAIL_REQUEST_KEYWORDS.test(transcript) && context?.lastIntent) {
+    return context.lastIntent;
+  }
+
+  if (context?.lastMatches?.length) {
+    const normalizedTranscript = normalizeText(transcript);
+    const referencesPriorMatch = context.lastMatches.some((match) =>
+      normalizedTranscript.includes(normalizeText(match.label)),
+    );
+
+    if (referencesPriorMatch) {
+      return context.lastIntent ?? "general";
+    }
+  }
+
   return "general";
+}
+
+function includesAny(text: string, candidates: string[]) {
+  return candidates.some((candidate) => text.includes(candidate));
+}
+
+function resolveOrdinalIndex(transcript: string, count: number) {
+  const normalized = normalizeText(transcript);
+
+  if (/(\b2\b|\btwo\b|\bsecond\b|\blater\b|\bother\b)/.test(normalized) && count >= 2) {
+    return 1;
+  }
+
+  if (/(\b3\b|\bthree\b|\bthird\b)/.test(normalized) && count >= 3) {
+    return 2;
+  }
+
+  if (/(\b1\b|\bfirst\b|\bearlier\b|\bcheaper\b)/.test(normalized)) {
+    return 0;
+  }
+
+  if (/(\bmore expensive\b|\bpremium\b|\bbetter one\b)/.test(normalized) && count >= 2) {
+    return count - 1;
+  }
+
+  return null;
+}
+
+function parsePriceFromDetail(detail: string) {
+  const match = detail.match(/(\d{2,5})/);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+}
+
+function resolveReferencedMatch(
+  transcript: string,
+  matches: VoiceCallMatch[],
+): VoiceCallMatch | null {
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const normalized = normalizeText(transcript);
+  const direct = matches.find((match) =>
+    normalized.includes(normalizeText(match.label)),
+  );
+
+  if (direct) {
+    return direct;
+  }
+
+  const ordinalIndex = resolveOrdinalIndex(transcript, matches.length);
+  if (ordinalIndex !== null && matches[ordinalIndex]) {
+    return matches[ordinalIndex];
+  }
+
+  if (normalized.includes("cheaper")) {
+    return [...matches].sort(
+      (left, right) => parsePriceFromDetail(left.detail) - parsePriceFromDetail(right.detail),
+    )[0] ?? null;
+  }
+
+  if (normalized.includes("more expensive") || normalized.includes("premium")) {
+    return [...matches].sort(
+      (left, right) => parsePriceFromDetail(right.detail) - parsePriceFromDetail(left.detail),
+    )[0] ?? null;
+  }
+
+  if ((normalized.includes("that one") || normalized.includes("the one")) && matches.length === 1) {
+    return matches[0];
+  }
+
+  return null;
 }
 
 function extractBudget(transcript: string) {
@@ -157,24 +268,95 @@ function confidenceFor(intent: IntentType, matches: VoiceCallMatch[], requiresHa
   return 0.66;
 }
 
+function candidateTermsForProduct(product: ProductRecord) {
+  const categoryTerms = normalizeText(product.category).split(" ");
+  const nameTerms = normalizeText(product.name).split(" ");
+  const featureTerms = product.features.flatMap((feature) => normalizeText(feature).split(" "));
+  const colorTerms = product.colors.map((color) => normalizeText(color));
+  const normalizedCategory = normalizeText(product.category);
+  const synonyms: string[] = [];
+
+  if (normalizedCategory.includes("desk")) {
+    synonyms.push("desk", "desks", "table", "tables", "workstation");
+  }
+
+  if (normalizedCategory.includes("seating")) {
+    synonyms.push("chair", "chairs", "office chair", "task chair", "seating");
+  }
+
+  return Array.from(new Set([...categoryTerms, ...nameTerms, ...featureTerms, ...colorTerms, ...synonyms]));
+}
+
+function inferRequestedProductFamily(transcript: string) {
+  const normalized = normalizeText(transcript);
+
+  if (includesAny(normalized, ["chair", "chairs", "office chair", "task chair", "seating"])) {
+    return "chair";
+  }
+
+  if (includesAny(normalized, ["desk", "desks", "table", "tables", "workstation"])) {
+    return "desk";
+  }
+
+  return null;
+}
+
 function filterProducts(products: ProductRecord[], transcript: string) {
   const budget = extractBudget(transcript);
   const color = extractColor(transcript);
   const normalized = normalizeText(transcript);
+  const queryTokens = normalized.split(" ").filter(Boolean);
+  const requestedFamily = inferRequestedProductFamily(transcript);
 
-  return products.filter((product) => {
-    const terms = [
-      product.category.toLowerCase(),
-      product.category.toLowerCase().replace(/s$/, ""),
-      ...product.name.toLowerCase().split(" "),
-      ...product.features.map((feature) => feature.toLowerCase()),
-    ];
-    const categoryMatch = terms.some((term) => normalized.includes(term));
-    const colorMatch = color ? product.colors.some((item) => item.toLowerCase() === color) : true;
-    const budgetMatch = budget ? product.price <= budget : true;
+  return products
+    .map((product) => {
+      const productTerms = candidateTermsForProduct(product);
+      let score = 0;
 
-    return categoryMatch && colorMatch && budgetMatch;
-  });
+      for (const token of queryTokens) {
+        if (productTerms.some((term) => term.includes(token) || token.includes(term))) {
+          score += token.length > 4 ? 3 : 1;
+        }
+      }
+
+      if (normalized.includes(normalizeText(product.name))) {
+        score += 10;
+      }
+
+      if (color && product.colors.some((item) => normalizeText(item) === color)) {
+        score += 6;
+      }
+
+      if (budget !== null) {
+        if (product.price <= budget) {
+          score += 5;
+        } else {
+          score -= 10;
+        }
+      }
+
+      if (requestedFamily === "chair" && !productTerms.includes("chair")) {
+        score -= 12;
+      }
+
+      if (requestedFamily === "desk" && !productTerms.includes("desk")) {
+        score -= 12;
+      }
+
+      return {
+        product,
+        score,
+      };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      return left.product.price - right.product.price;
+    })
+    .map((item) => item.product);
 }
 
 function summarizeProducts(products: ProductRecord[]) {
@@ -218,19 +400,59 @@ function summarizeProducts(products: ProductRecord[]) {
   };
 }
 
+function candidateTermsForService(service: ServiceRecord) {
+  const normalizedDescription = normalizeText(service.description);
+  const terms = new Set([
+    ...normalizeText(service.name).split(" "),
+    ...normalizedDescription.split(" "),
+    ...normalizeText(service.bookingWindow).split(" "),
+  ]);
+
+  if (normalizedDescription.includes("consult")) {
+    terms.add("consultation");
+    terms.add("consult");
+  }
+
+  if (normalizeText(service.name).includes("showroom")) {
+    terms.add("visit");
+    terms.add("onsite");
+  }
+
+  if (normalizeText(service.name).includes("discovery")) {
+    terms.add("intro");
+    terms.add("planning");
+  }
+
+  return Array.from(terms);
+}
+
 function searchServices(services: ServiceRecord[], transcript: string) {
   const normalized = normalizeText(transcript);
+  const tokens = normalized.split(" ").filter(Boolean);
 
-  return services.filter((service) => {
-    const terms = [
-      service.name.toLowerCase(),
-      ...service.name.toLowerCase().split(" "),
-      ...service.description.toLowerCase().split(" "),
-      ...service.bookingWindow.toLowerCase().split(/[\s,-]+/),
-    ];
+  return services
+    .map((service) => {
+      const terms = candidateTermsForService(service);
+      let score = 0;
 
-    return terms.some((term) => term.length > 3 && normalized.includes(term));
-  });
+      for (const token of tokens) {
+        if (token.length > 2 && terms.some((term) => term.includes(token) || token.includes(term))) {
+          score += token.length > 4 ? 3 : 1;
+        }
+      }
+
+      if (normalized.includes(normalizeText(service.name))) {
+        score += 8;
+      }
+
+      return {
+        service,
+        score,
+      };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .map((item) => item.service);
 }
 
 function summarizeServices(services: ServiceRecord[]) {
@@ -252,6 +474,54 @@ function summarizeServices(services: ServiceRecord[]) {
       detail: `${item.durationMinutes} min - ${item.priceRange}`,
     })),
   };
+}
+
+function findProductByLabel(products: ProductRecord[], label: string) {
+  const normalizedLabel = normalizeText(label);
+  return products.find((product) => normalizeText(product.name) === normalizedLabel);
+}
+
+function findServiceByLabel(services: ServiceRecord[], label: string) {
+  const normalizedLabel = normalizeText(label);
+  return services.find((service) => normalizeText(service.name) === normalizedLabel);
+}
+
+function buildProductDetailReply(product: ProductRecord, transcript: string) {
+  const normalized = normalizeText(transcript);
+  const colorSummary = product.colors.join(", ");
+  const featureSummary = product.features.slice(0, 3).join(", ");
+
+  if (includesAny(normalized, ["color", "colour", "colors", "colours"])) {
+    return `${product.name} is available in ${colorSummary}. Verified features include ${featureSummary}.`;
+  }
+
+  if (includesAny(normalized, ["feature", "features", "include", "support"])) {
+    return `${product.name} is ${formatCurrency(product.price)}. Verified features include ${featureSummary}.`;
+  }
+
+  if (includesAny(normalized, ["price", "pricing", "cost", "how much"])) {
+    return `${product.name} is ${formatCurrency(product.price)}. It comes in ${colorSummary}.`;
+  }
+
+  return `${product.name} is ${formatCurrency(product.price)}, comes in ${colorSummary}, and includes ${featureSummary}.`;
+}
+
+function buildServiceDetailReply(service: ServiceRecord, transcript: string) {
+  const normalized = normalizeText(transcript);
+
+  if (includesAny(normalized, ["duration", "long", "minutes", "minute"])) {
+    return `${service.name} runs for ${service.durationMinutes} minutes. It is currently offered ${service.bookingWindow}.`;
+  }
+
+  if (includesAny(normalized, ["price", "pricing", "cost", "how much"])) {
+    return `${service.name} is priced ${service.priceRange}. It runs for ${service.durationMinutes} minutes.`;
+  }
+
+  if (includesAny(normalized, ["availability", "hours", "when"])) {
+    return `${service.name} is currently offered ${service.bookingWindow}. It lasts ${service.durationMinutes} minutes.`;
+  }
+
+  return `${service.name} runs for ${service.durationMinutes} minutes, is currently offered ${service.bookingWindow}, and is priced ${service.priceRange}.`;
 }
 
 function expandWeekday(label: string) {
@@ -294,6 +564,46 @@ function collectSlots(bookingTypes: BookingType[]) {
         spoken: spokenSlotLabel(slot),
       })),
   );
+}
+
+function resolveSlotFromSession(
+  transcript: string,
+  offeredSlots: VoiceSessionOfferedSlot[],
+) {
+  if (offeredSlots.length === 0) {
+    return null;
+  }
+
+  const normalized = normalizeText(transcript);
+  const direct = offeredSlots.find(
+    (slot) =>
+      normalized.includes(normalizeText(slot.spoken)) ||
+      normalized.includes(normalizeText(slot.raw)),
+  );
+
+  if (direct) {
+    return direct;
+  }
+
+  const ordinalIndex = resolveOrdinalIndex(transcript, offeredSlots.length);
+  if (ordinalIndex !== null && offeredSlots[ordinalIndex]) {
+    return offeredSlots[ordinalIndex];
+  }
+
+  const weekdayMatch = offeredSlots.find((slot) => {
+    const weekday = normalizeText(slot.spoken).split(" at ")[0];
+    return Boolean(weekday) && normalized.includes(weekday);
+  });
+
+  if (weekdayMatch && CONFIRMATION_KEYWORDS.test(transcript)) {
+    return weekdayMatch;
+  }
+
+  if (offeredSlots.length === 1 && CONFIRMATION_KEYWORDS.test(transcript)) {
+    return offeredSlots[0];
+  }
+
+  return null;
 }
 
 function buildSlotCandidates(bookingTypes: BookingType[], timeZone: string) {
@@ -518,6 +828,7 @@ async function maybeComposeLiveReply(input: {
   actionSummary: string;
   requiresHandoff: boolean;
   matches: VoiceCallMatch[];
+  recentTurns: TranscriptTurn[];
 }) {
   if (appConfig.isMockMode) {
     return input.fallbackResponse;
@@ -531,6 +842,7 @@ async function maybeComposeLiveReply(input: {
     actionSummary: input.actionSummary,
     requiresHandoff: input.requiresHandoff,
     matches: input.matches,
+    recentTurns: input.recentTurns,
   });
 }
 
@@ -550,6 +862,35 @@ function buildSummary(outcome: CallOutcome, responseText: string, actionSummary:
   return actionSummary;
 }
 
+function sanitizeVoiceResponse(value: string) {
+  const normalized = value
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.!?])/g, "$1")
+    .trim();
+
+  if (!normalized) {
+    return normalized;
+  }
+
+  const sentences = normalized.match(/[^.!?]+[.!?]?/g)?.map((sentence) => sentence.trim()) ?? [normalized];
+  const limitedSentences = sentences.filter(Boolean).slice(0, 2);
+  let reply = limitedSentences.join(" ").trim();
+
+  const questionMarks = (reply.match(/\?/g) ?? []).length;
+  if (questionMarks > 1) {
+    const firstQuestionIndex = reply.indexOf("?");
+    reply = reply.slice(0, firstQuestionIndex + 1);
+  }
+
+  if (reply.length > 260) {
+    const clipped = reply.slice(0, 257);
+    const boundary = clipped.lastIndexOf(" ");
+    reply = `${clipped.slice(0, boundary > 180 ? boundary : 257).trim()}...`;
+  }
+
+  return reply;
+}
+
 function interestFromMatches(matches: VoiceCallMatch[], transcript: string) {
   return matches[0]?.label ?? transcript.slice(0, 80);
 }
@@ -559,8 +900,17 @@ export async function processInboundVoiceCall(
 ): Promise<VoiceCallResult> {
   const startedAt = Date.now();
   const workspace = await loadVoiceWorkspaceContext(payload.tenantId);
-  const intent = detectIntent(payload.transcript, payload.selectedSlot);
+  const session = getVoiceSession(payload);
+  const sessionResolvedSlot = resolveSlotFromSession(payload.transcript, session.offeredSlots);
+  const effectiveSelectedSlot = payload.selectedSlot ?? sessionResolvedSlot?.spoken;
+  const effectiveBookingType = payload.bookingType ?? session.lastBookingTypeName;
+  const intent = detectIntent(payload.transcript, effectiveSelectedSlot, {
+    lastIntent: session.lastIntent,
+    lastMatches: session.lastMatches,
+    hasOfferedSlots: session.offeredSlots.length > 0,
+  });
   const callerTurn = createTurn("caller", payload.transcript, "00:00");
+  const referencedPriorMatch = resolveReferencedMatch(payload.transcript, session.lastMatches);
 
   let outcome: CallOutcome = "resolved";
   let responseText =
@@ -573,6 +923,9 @@ export async function processInboundVoiceCall(
   let bookingId: string | undefined;
   let handoffTarget: string | undefined;
   let toolLabel: string | undefined;
+  let nextOfferedSlots: VoiceSessionOfferedSlot[] = session.offeredSlots;
+  let nextBookingTypeId = session.lastBookingTypeId;
+  let nextBookingTypeName = session.lastBookingTypeName;
 
   if (intent === "handoff") {
     requiresHandoff = true;
@@ -581,11 +934,12 @@ export async function processInboundVoiceCall(
     trustedSources = ["Handoff policy", "Trusted knowledge guardrails"];
     actionSummary = "Detected a custom or unsupported request and triggered human fallback.";
     handoffTarget = workspace.profile.handoffTarget;
+    nextOfferedSlots = [];
   } else if (intent === "booking") {
     const bookingType = pickBookingType(
       workspace.bookingTypes,
       payload.transcript,
-      payload.bookingType,
+      effectiveBookingType,
     );
     const slotCandidates = buildSlotCandidates(
       workspace.bookingTypes,
@@ -594,8 +948,10 @@ export async function processInboundVoiceCall(
     const requestedSlot = resolveRequestedSlot(
       workspace.bookingTypes,
       payload.transcript,
-      payload.selectedSlot,
+      effectiveSelectedSlot,
     );
+    nextBookingTypeId = bookingType?.id;
+    nextBookingTypeName = bookingType?.name;
 
     trustedSources = ["Google Calendar booking rules", "Structured service booking types"];
 
@@ -641,6 +997,7 @@ export async function processInboundVoiceCall(
           ];
           responseText = `Perfect. Your ${bookingType.name.toLowerCase()} has been booked for ${slot.spoken}. You're all set.`;
           actionSummary = "Confirmed the caller's selected slot and created a booking record.";
+          nextOfferedSlots = [];
         } else {
           try {
             const availableSelection = await getGoogleCalendarAvailableSlots({
@@ -692,6 +1049,7 @@ export async function processInboundVoiceCall(
             ];
             responseText = `Perfect. Your ${bookingType.name.toLowerCase()} has been booked for ${slot.spoken}. You're all set.`;
             actionSummary = "Confirmed the caller's selected slot and created a Google Calendar event.";
+            nextOfferedSlots = [];
           } catch {
             responseText =
               "I couldn't confirm that slot against the connected calendar right now, so the safest next step is a callback from the team.";
@@ -701,6 +1059,7 @@ export async function processInboundVoiceCall(
             outcome = "handoff";
             handoffTarget = workspace.profile.handoffTarget;
             matches = [];
+            nextOfferedSlots = [];
           }
         }
       }
@@ -728,6 +1087,16 @@ export async function processInboundVoiceCall(
           bookingOffer.matches.length === 0 ? workspace.profile.handoffTarget : undefined;
         toolLabel =
           bookingOffer.matches.length > 0 ? "Google Calendar availability" : undefined;
+        nextOfferedSlots = slotCandidates
+          .filter((candidate) => bookingOffer.matches.some((match) => match.label === candidate.spoken))
+          .map((candidate) => ({
+            bookingTypeId: candidate.bookingType.id,
+            bookingTypeName: candidate.bookingType.name,
+            raw: candidate.raw,
+            spoken: candidate.spoken,
+            startIso: candidate.start.toISOString(),
+            endIso: candidate.end.toISOString(),
+          }));
       } else if (bookingType) {
         try {
           const candidates = buildSlotCandidates([bookingType], workspace.profile.timezone).slice(0, 6);
@@ -755,6 +1124,16 @@ export async function processInboundVoiceCall(
             bookingOffer.matches.length === 0 ? workspace.profile.handoffTarget : undefined;
           toolLabel =
             bookingOffer.matches.length > 0 ? "Google Calendar availability" : undefined;
+          nextOfferedSlots = candidates
+            .filter((candidate) => bookingOffer.matches.some((match) => match.label === candidate.spoken))
+            .map((candidate) => ({
+              bookingTypeId: candidate.bookingType.id,
+              bookingTypeName: candidate.bookingType.name,
+              raw: candidate.raw,
+              spoken: candidate.spoken,
+              startIso: candidate.start.toISOString(),
+              endIso: candidate.end.toISOString(),
+            }));
         } catch {
           responseText =
             "I couldn't verify live availability from the connected calendar right now, so the safest next step is a callback from the team.";
@@ -764,6 +1143,7 @@ export async function processInboundVoiceCall(
           actionSummary =
             "Live Google Calendar availability could not be verified, so the flow was routed to safe fallback.";
           handoffTarget = workspace.profile.handoffTarget;
+          nextOfferedSlots = [];
         }
       } else {
         responseText = fallbackOffer.responseText;
@@ -773,10 +1153,17 @@ export async function processInboundVoiceCall(
         actionSummary =
           "Unable to map the caller request to a known booking type, recommended human follow-up.";
         handoffTarget = workspace.profile.handoffTarget;
+        nextOfferedSlots = [];
       }
     }
   } else if (intent === "product-inquiry") {
-    const products = filterProducts(workspace.products, payload.transcript);
+    const referencedProduct =
+      referencedPriorMatch?.type === "product"
+        ? findProductByLabel(workspace.products, referencedPriorMatch.label)
+        : null;
+    const products = referencedProduct
+      ? [referencedProduct]
+      : filterProducts(workspace.products, payload.transcript);
 
     if (wantsLiveData(payload.transcript) && products.some((product) => product.stockStatus !== "connected-live")) {
       requiresHandoff = true;
@@ -786,8 +1173,24 @@ export async function processInboundVoiceCall(
       trustedSources = ["Structured product catalog", "Inventory guardrail"];
       actionSummary = "Blocked an answer that required unconnected live inventory or delivery data.";
       handoffTarget = workspace.profile.handoffTarget;
+      nextOfferedSlots = [];
     } else {
-      const summary = summarizeProducts(products);
+      const wantsProductDetail =
+        Boolean(referencedProduct) &&
+        (DETAIL_REQUEST_KEYWORDS.test(payload.transcript) ||
+          !PRODUCT_KEYWORDS.test(payload.transcript));
+      const summary = wantsProductDetail && referencedProduct
+        ? {
+            responseText: buildProductDetailReply(referencedProduct, payload.transcript),
+            matches: [
+              {
+                type: "product" as const,
+                label: referencedProduct.name,
+                detail: `${formatCurrency(referencedProduct.price)} - ${referencedProduct.features.join(", ")}`,
+              },
+            ],
+          }
+        : summarizeProducts(products);
       responseText = summary.responseText;
       matches = summary.matches;
       trustedSources = ["Structured product catalog", "FAQ policies"];
@@ -795,7 +1198,9 @@ export async function processInboundVoiceCall(
       outcome = products.length === 0 ? "handoff" : "resolved";
       actionSummary =
         products.length > 0
-          ? "Read only verified product data and offered the next safe step."
+          ? referencedProduct && wantsProductDetail
+            ? "Answered a follow-up about a previously matched verified product."
+            : "Read only verified product data and offered the next safe step."
           : "No safe product match found, recommended human handoff.";
 
       if (products.length === 0) {
@@ -834,10 +1239,33 @@ export async function processInboundVoiceCall(
         responseText = `I've logged a callback request about ${interestFromMatches(summary.matches, payload.transcript)}. A team member will follow up with you shortly.`;
         actionSummary = "Captured a qualified lead from a grounded product inquiry.";
       }
+
+      nextOfferedSlots = [];
     }
   } else if (intent === "service-inquiry") {
-    const services = searchServices(workspace.services, payload.transcript);
-    const summary = summarizeServices(services);
+    const referencedService =
+      referencedPriorMatch?.type === "service"
+        ? findServiceByLabel(workspace.services, referencedPriorMatch.label)
+        : null;
+    const services = referencedService
+      ? [referencedService]
+      : searchServices(workspace.services, payload.transcript);
+    const wantsServiceDetail =
+      Boolean(referencedService) &&
+      (DETAIL_REQUEST_KEYWORDS.test(payload.transcript) ||
+        !SERVICE_KEYWORDS.test(payload.transcript));
+    const summary = wantsServiceDetail && referencedService
+      ? {
+          responseText: buildServiceDetailReply(referencedService, payload.transcript),
+          matches: [
+            {
+              type: "service" as const,
+              label: referencedService.name,
+              detail: `${referencedService.durationMinutes} min - ${referencedService.priceRange}`,
+            },
+          ],
+        }
+      : summarizeServices(services);
 
     responseText = summary.responseText;
     matches = summary.matches;
@@ -846,7 +1274,9 @@ export async function processInboundVoiceCall(
     outcome = services.length === 0 ? "handoff" : "resolved";
     actionSummary =
       services.length > 0
-        ? "Answered using connected service records only."
+        ? referencedService && wantsServiceDetail
+          ? "Answered a follow-up about a previously matched verified service."
+          : "Answered using connected service records only."
         : "Could not verify a service answer safely and recommended a handoff.";
     handoffTarget = services.length === 0 ? workspace.profile.handoffTarget : undefined;
     if (services.length === 0) {
@@ -868,6 +1298,7 @@ export async function processInboundVoiceCall(
         }
       }
     }
+    nextOfferedSlots = [];
   } else if (intent === "lead-capture") {
     const lead = await createLeadRecord({
       workspaceId: workspace.workspaceId,
@@ -886,6 +1317,7 @@ export async function processInboundVoiceCall(
     trustedSources = ["CRM capture policy"];
     actionSummary = "Captured a callback request as a lead.";
     toolLabel = "CRM lead capture";
+    nextOfferedSlots = [];
   } else {
     const knowledgeFallback = await findKnowledgeFallback(
       workspace.workspaceId,
@@ -900,7 +1332,11 @@ export async function processInboundVoiceCall(
       requiresHandoff = false;
       outcome = "resolved";
     }
+    nextOfferedSlots = [];
   }
+
+  const agentTurnSeed = createTurn("agent", responseText, "00:04", toolLabel);
+  const recentTurns = [...session.recentTurns, callerTurn, agentTurnSeed].slice(-8);
 
   responseText = await maybeComposeLiveReply({
     callerTranscript: payload.transcript,
@@ -910,7 +1346,9 @@ export async function processInboundVoiceCall(
     actionSummary,
     requiresHandoff,
     matches,
+    recentTurns,
   });
+  responseText = sanitizeVoiceResponse(responseText);
 
   const agentTurn = createTurn("agent", responseText, "00:04", toolLabel);
   const transcript = [callerTurn, agentTurn];
@@ -934,6 +1372,21 @@ export async function processInboundVoiceCall(
     requiresHandoff,
     matches,
   });
+
+  appendSessionTurns(payload, transcript);
+
+  if (outcome === "handoff") {
+    clearVoiceSession(payload);
+  } else {
+    const updatedSession = getVoiceSession(payload);
+    updatedSession.lastIntent = intent;
+    updatedSession.lastMatches = matches;
+    updatedSession.lastResponseText = responseText;
+    updatedSession.lastBookingTypeId = nextBookingTypeId;
+    updatedSession.lastBookingTypeName = nextBookingTypeName;
+    updatedSession.offeredSlots = nextOfferedSlots;
+    updatedSession.updatedAt = Date.now();
+  }
 
   return {
     callId: persistedCall.id,
