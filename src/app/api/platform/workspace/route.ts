@@ -1,6 +1,13 @@
+import {
+  createRouteHandler,
+  jsonSuccess,
+} from "@/lib/api/route-handler";
 import { getWorkspaceSnapshot } from "@/lib/platform";
 
-export async function GET() {
-  const snapshot = await getWorkspaceSnapshot();
-  return Response.json(snapshot);
-}
+export const GET = createRouteHandler(
+  "/api/platform/workspace",
+  async (_request, context) => {
+    const snapshot = await getWorkspaceSnapshot();
+    return jsonSuccess(context, snapshot);
+  },
+);

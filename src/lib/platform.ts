@@ -1,3 +1,5 @@
+import { cache } from "react";
+
 import {
   adminMetrics,
   agentRules,
@@ -22,8 +24,12 @@ import {
   workspaceProfile,
 } from "@/lib/mock-data";
 
-export async function getWorkspaceSnapshot() {
-  return {
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+export const getWorkspaceSnapshot = cache(async () =>
+  clone({
     profile: workspaceProfile,
     metrics: dashboardMetrics,
     onboarding: onboardingChecklist,
@@ -31,53 +37,53 @@ export async function getWorkspaceSnapshot() {
     calls: recentCalls,
     leads: leadCaptures,
     bookings,
-  };
-}
+  }),
+);
 
-export async function getKnowledgeSnapshot() {
-  return {
+export const getKnowledgeSnapshot = cache(async () =>
+  clone({
     sources: knowledgeSources,
     products: productCatalog,
     services: serviceCatalog,
-  };
-}
+  }),
+);
 
-export async function getIntegrationSnapshot() {
-  return {
+export const getIntegrationSnapshot = cache(async () =>
+  clone({
     integrations,
     bookingTypes,
-  };
-}
+  }),
+);
 
-export async function getAgentSnapshot() {
-  return {
+export const getAgentSnapshot = cache(async () =>
+  clone({
     profile: workspaceProfile,
     rules: agentRules,
     pipeline: voicePipeline,
-  };
-}
+  }),
+);
 
-export async function getAnalyticsSnapshot() {
-  return {
+export const getAnalyticsSnapshot = cache(async () =>
+  clone({
     metrics: dashboardMetrics,
     intentMix: analyticsBreakdown,
     weeklyVolume,
-  };
-}
+  }),
+);
 
-export async function getTeamSnapshot() {
-  return {
+export const getTeamSnapshot = cache(async () =>
+  clone({
     members: teamMembers,
     leads: leadCaptures,
-  };
-}
+  }),
+);
 
-export async function getAdminSnapshot() {
-  return {
+export const getAdminSnapshot = cache(async () =>
+  clone({
     metrics: adminMetrics,
     providers: providerCredentials,
     tenants: tenantRecords,
     audit: auditEvents,
     featureFlags,
-  };
-}
+  }),
+);

@@ -9,6 +9,8 @@ Dialiq is a Next.js MVP for a voice-first AI agent SaaS for businesses. The prod
 - An internal admin console at `/admin`
 - Mocked platform data and API routes that model the core MVP entities
 - A simulated inbound Twilio voice webhook at `/api/webhooks/twilio/voice`
+- Production-minded route utilities, environment validation, health checks, and security headers
+- Unit tests and GitHub Actions CI for lint, test, and build verification
 
 ## MVP scope represented here
 
@@ -52,6 +54,8 @@ src/
 
 ## API routes
 
+- `GET /api/health`
+  Returns service status, mock-mode state, and provider readiness.
 - `GET /api/platform/workspace`
   Returns the mocked business workspace snapshot.
 - `GET /api/platform/admin`
@@ -79,9 +83,20 @@ npm install
 npm run dev
 ```
 
+## Quality checks
+
+```bash
+npm run lint
+npm run test
+npm run build
+```
+
 ## Environment variables
 
 Copy `.env.example` into `.env.local` and fill in real provider credentials when you are ready to replace the mocked services and UI data with live integrations.
+
+- `DIALIQ_MOCK_MODE=true` keeps the webhook and health surface usable without live providers.
+- When you wire production providers, disable mock mode and provide the required Twilio, Deepgram, OpenRouter, and ElevenLabs credentials.
 
 ## Next implementation steps
 
