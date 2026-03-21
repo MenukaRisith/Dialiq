@@ -1,6 +1,8 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { adminNavigation } from "@/lib/navigation";
 
+export const dynamic = "force-dynamic";
+
 export default function AdminLayout({
   children,
 }: Readonly<{

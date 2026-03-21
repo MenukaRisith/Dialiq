@@ -6,8 +6,9 @@ import { getWorkspaceSnapshot } from "@/lib/platform";
 
 export const GET = createRouteHandler(
   "/api/platform/workspace",
-  async (_request, context) => {
-    const snapshot = await getWorkspaceSnapshot();
+  async (request, context) => {
+    const tenantId = new URL(request.url).searchParams.get("tenantId") ?? undefined;
+    const snapshot = await getWorkspaceSnapshot(tenantId);
     return jsonSuccess(context, snapshot);
   },
 );

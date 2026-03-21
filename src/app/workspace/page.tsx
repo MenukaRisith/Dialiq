@@ -21,10 +21,10 @@ export default async function WorkspaceOverviewPage() {
               Tenant mode
             </p>
             <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--foreground)]">
-              Hybrid product + service
+              {snapshot.profile.mode.replace("-", " ")}
             </p>
             <p className="mt-2 text-sm leading-6 text-[var(--muted-strong)]">
-              Phone and WhatsApp calling are connected. AI actions stay within trusted catalog data and verified calendar slots.
+              Phone and WhatsApp calling are connected. AI actions stay within trusted catalog data, verified calendar slots, and explicit handoff rules for {snapshot.profile.handoffTarget ?? "the team"}.
             </p>
           </Panel>
         }
@@ -108,9 +108,9 @@ export default async function WorkspaceOverviewPage() {
                   className="rounded-[22px] border border-white/10 bg-white/6 p-4"
                 >
                   <div className="flex items-center justify-between gap-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/54">
-                      {turn.speaker}
-                    </p>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/54">
+                {turn.speaker}
+              </p>
                     <p className="text-xs font-mono text-white/54">{turn.timestamp}</p>
                   </div>
                   <p className="mt-2 text-sm leading-7 text-white/84">{turn.text}</p>

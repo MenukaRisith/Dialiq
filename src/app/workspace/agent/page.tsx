@@ -27,7 +27,7 @@ export default async function AgentPage() {
               Short, welcoming, and immediately useful.
             </h2>
             <p className="mt-4 text-sm leading-7 text-white/78">
-              {"\"Thanks for calling Atelier Workspace. I can help with product questions, consultation bookings, or get a team member to call you back. How can I help?\""}
+              {`"${snapshot.profile.voiceGreeting ?? "Thanks for calling. How can I help today?"}"`}
             </p>
           </div>
 

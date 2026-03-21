@@ -108,11 +108,11 @@ export const voicePipeline: PipelineStage[] = [
   {
     id: "reason",
     name: "Intent and policy reasoning",
-    provider: "OpenRouter - gpt-5.4-mini",
+    provider: "Deterministic fast path + OpenRouter",
     description:
-      "Classifies product, service, booking, or lead intents and decides which trusted sources or tools may be used.",
+      "Classifies product, service, booking, or lead intents with a fast policy path first, then leaves room for OpenRouter on ambiguous turns once live providers are wired.",
     reliabilityRule:
-      "The model cannot answer prices, stock, or availability unless those fields exist in connected structured sources.",
+      "No answer may include prices, stock, or availability unless those fields exist in connected structured sources and the policy engine allows them.",
     status: "healthy",
   },
   {

@@ -89,18 +89,24 @@ model Business {
 }
 
 model Workspace {
-  id               String            @id @default(cuid())
-  businessId       String
-  name             String
-  summary          String
+  id              String             @id @default(cuid())
+  businessId      String
+  slug            String             @unique
+  name            String
+  summary         String
+  voiceGreeting   String             @default("Thanks for calling Dialiq. How can I help today?")
+  handoffTarget   String             @default("Sales queue")
   knowledgeSources KnowledgeSource[]
-  agents           Agent[]
-  calls            Call[]
-  bookings         Booking[]
-  leads            Lead[]
-  business         Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  agents          Agent[]
+  calls           Call[]
+  bookings        Booking[]
+  leads           Lead[]
+  products        Product[]
+  services        ServiceOffering[]
+  bookingTypes    BookingTypeConfig[]
+  business        Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 }
 
 model Agent {
@@ -117,18 +123,18 @@ model Agent {
 }
 
 model KnowledgeSource {
-  id          String              @id @default(cuid())
-  workspaceId String
-  name        String
-  type        KnowledgeSourceType
-  status      String
-  items       Int
-  coverage    Int
+  id           String              @id @default(cuid())
+  workspaceId  String
+  name         String
+  type         KnowledgeSourceType
+  status       String
+  items        Int
+  coverage     Int
   lastSyncedAt DateTime?
   trustedFields Json
-  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  workspace    Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
 }
 
 model Call {
@@ -141,8 +147,13 @@ model Call {
   intent          String
   summary         String
   durationSeconds Int
+  latencyMs       Int         @default(0)
   confidence      Float
   transcript      Json
+  trustedSources  Json?
+  actionSummary   String?
+  requiresHandoff Boolean     @default(false)
+  matches         Json?
   workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -156,6 +167,7 @@ model Booking {
   slotAt      DateTime
   channel     CallChannel
   status      BookingStatus
+  notes       String?
   workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
@@ -168,9 +180,57 @@ model Lead {
   interest    String
   status      LeadStatus
   owner       String
+  channel     CallChannel
+  notes       String?
   workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+}
+
+model Product {
+  id           String    @id @default(cuid())
+  workspaceId  String
+  externalId   String?
+  name         String
+  category     String
+  price        Int
+  currency     String    @default("EUR")
+  colors       Json
+  features     Json
+  stockStatus  String
+  trustedFields Json
+  isActive     Boolean   @default(true)
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model ServiceOffering {
+  id              String    @id @default(cuid())
+  workspaceId     String
+  name            String
+  description     String
+  durationMinutes Int
+  bookingWindow   String
+  priceRange      String
+  status          String
+  isBookable      Boolean   @default(true)
+  workspace       Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model BookingTypeConfig {
+  id               String    @id @default(cuid())
+  workspaceId      String
+  name             String
+  durationMinutes  Int
+  slotLabels       Json
+  confirmationRule String
+  status           String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model ProviderCredential {

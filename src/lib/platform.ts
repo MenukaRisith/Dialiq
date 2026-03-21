@@ -1,92 +1,52 @@
-import { cache } from "react";
-
+import { listProviderCredentialsDashboard } from "@/lib/repositories/provider-credentials";
+import {
+  getAgentOperationalSnapshot,
+  getAnalyticsOperationalSnapshot,
+  getIntegrationOperationalSnapshot,
+  getKnowledgeOperationalSnapshot,
+  getTeamOperationalSnapshot,
+  getWorkspaceOperationalSnapshot,
+} from "@/lib/repositories/workspace-operations";
 import {
   adminMetrics,
-  agentRules,
-  analyticsBreakdown,
   auditEvents,
-  bookings,
-  bookingTypes,
-  dashboardMetrics,
   featureFlags,
-  integrations,
-  knowledgeSources,
-  leadCaptures,
-  onboardingChecklist,
-  productCatalog,
-  recentCalls,
-  serviceCatalog,
-  teamMembers,
   tenantRecords,
-  voicePipeline,
-  weeklyVolume,
-  workspaceProfile,
 } from "@/lib/mock-data";
-import { listProviderCredentialsDashboard } from "@/lib/repositories/provider-credentials";
 
-function clone<T>(value: T): T {
-  return structuredClone(value);
+export async function getWorkspaceSnapshot(tenantId?: string) {
+  return getWorkspaceOperationalSnapshot(tenantId);
 }
 
-export const getWorkspaceSnapshot = cache(async () =>
-  clone({
-    profile: workspaceProfile,
-    metrics: dashboardMetrics,
-    onboarding: onboardingChecklist,
-    pipeline: voicePipeline,
-    calls: recentCalls,
-    leads: leadCaptures,
-    bookings,
-  }),
-);
+export async function getKnowledgeSnapshot(tenantId?: string) {
+  return getKnowledgeOperationalSnapshot(tenantId);
+}
 
-export const getKnowledgeSnapshot = cache(async () =>
-  clone({
-    sources: knowledgeSources,
-    products: productCatalog,
-    services: serviceCatalog,
-  }),
-);
+export async function getIntegrationSnapshot(tenantId?: string) {
+  return getIntegrationOperationalSnapshot(tenantId);
+}
 
-export const getIntegrationSnapshot = cache(async () =>
-  clone({
-    integrations,
-    bookingTypes,
-  }),
-);
+export async function getAgentSnapshot(tenantId?: string) {
+  return getAgentOperationalSnapshot(tenantId);
+}
 
-export const getAgentSnapshot = cache(async () =>
-  clone({
-    profile: workspaceProfile,
-    rules: agentRules,
-    pipeline: voicePipeline,
-  }),
-);
+export async function getAnalyticsSnapshot(tenantId?: string) {
+  return getAnalyticsOperationalSnapshot(tenantId);
+}
 
-export const getAnalyticsSnapshot = cache(async () =>
-  clone({
-    metrics: dashboardMetrics,
-    intentMix: analyticsBreakdown,
-    weeklyVolume,
-  }),
-);
+export async function getTeamSnapshot(tenantId?: string) {
+  return getTeamOperationalSnapshot(tenantId);
+}
 
-export const getTeamSnapshot = cache(async () =>
-  clone({
-    members: teamMembers,
-    leads: leadCaptures,
-  }),
-);
-
-export const getAdminSnapshot = cache(async () => {
+export async function getAdminSnapshot() {
   const providerDashboard = await listProviderCredentialsDashboard();
 
-  return clone({
+  return {
     metrics: adminMetrics,
     providers: providerDashboard.credentials,
     database: providerDashboard.database,
     tenants: tenantRecords,
     audit: auditEvents,
     featureFlags,
-  });
-});
+  };
+}

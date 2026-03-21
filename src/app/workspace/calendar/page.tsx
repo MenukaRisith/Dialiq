@@ -2,9 +2,12 @@ import { DataTable } from "@/components/ui/data-table";
 import { Panel } from "@/components/ui/panel";
 import { SectionIntro } from "@/components/ui/section-intro";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { bookings, bookingTypes } from "@/lib/mock-data";
+import { getIntegrationSnapshot, getWorkspaceSnapshot } from "@/lib/platform";
 
-export default function CalendarPage() {
+export default async function CalendarPage() {
+  const integrationSnapshot = await getIntegrationSnapshot();
+  const workspaceSnapshot = await getWorkspaceSnapshot();
+
   return (
     <>
       <SectionIntro
@@ -17,7 +20,7 @@ export default function CalendarPage() {
         <DataTable
           caption="Bookable call types"
           headers={["Type", "Duration", "Availability", "Confirmation"]}
-          rows={bookingTypes.map((booking) => [
+          rows={integrationSnapshot.bookingTypes.map((booking) => [
             <div key={`${booking.id}-name`} className="space-y-1">
               <p className="font-semibold text-[var(--foreground)]">{booking.name}</p>
               <StatusBadge status={booking.status} />
@@ -62,7 +65,7 @@ export default function CalendarPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
             Upcoming bookings
           </p>
-          {bookings.map((booking) => (
+          {workspaceSnapshot.bookings.map((booking) => (
             <div
               key={booking.id}
               className="rounded-[22px] border border-[color:var(--border)] bg-white/58 p-4"

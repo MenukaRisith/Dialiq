@@ -51,7 +51,7 @@ export default async function IntegrationsPage() {
           {[
             "Twilio receives the inbound phone or WhatsApp voice call and resolves the tenant.",
             "Deepgram Flux streams transcripts and turn-taking signals into the application layer.",
-            "OpenRouter sends the call state to gpt-5.4-mini with tool permissions constrained by backend policy.",
+            "A deterministic fast path handles high-confidence routing immediately, while OpenRouter remains available for deeper reasoning behind backend policy.",
             "Google Calendar and CRM actions are executed only after confirmation and then logged.",
             "ElevenLabs returns the final short spoken answer back to the caller.",
           ].map((step, index) => (

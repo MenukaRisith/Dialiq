@@ -1,18 +1,22 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { workspaceNavigation } from "@/lib/navigation";
-import { workspaceProfile } from "@/lib/mock-data";
+import { getWorkspaceSnapshot } from "@/lib/platform";
 
-export default function WorkspaceLayout({
+export const dynamic = "force-dynamic";
+
+export default async function WorkspaceLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const snapshot = await getWorkspaceSnapshot();
+
   return (
     <AppShell
       mode="workspace"
       navigation={workspaceNavigation}
-      title={workspaceProfile.workspaceName}
-      description={workspaceProfile.summary}
+      title={snapshot.profile.workspaceName}
+      description={snapshot.profile.summary}
     >
       {children}
     </AppShell>

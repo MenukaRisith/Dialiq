@@ -2,11 +2,12 @@ import { DataTable } from "@/components/ui/data-table";
 import { Panel } from "@/components/ui/panel";
 import { SectionIntro } from "@/components/ui/section-intro";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { recentCalls } from "@/lib/mock-data";
+import { getWorkspaceSnapshot } from "@/lib/platform";
 import { formatPercent, formatSeconds } from "@/lib/utils";
 
-export default function CallsPage() {
-  const handoffCalls = recentCalls.filter((call) => call.outcome === "handoff");
+export default async function CallsPage() {
+  const snapshot = await getWorkspaceSnapshot();
+  const handoffCalls = snapshot.calls.filter((call) => call.outcome === "handoff");
 
   return (
     <>
@@ -19,8 +20,8 @@ export default function CallsPage() {
       <section className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
         <DataTable
           caption="Recent inbound conversations"
-          headers={["Call", "Outcome", "Confidence", "Summary"]}
-          rows={recentCalls.map((call) => [
+          headers={["Call", "Outcome", "Confidence", "Latency", "Summary"]}
+          rows={snapshot.calls.map((call) => [
             <div key={`${call.id}-call`} className="space-y-1">
               <p className="font-semibold text-[var(--foreground)]">{call.id}</p>
               <p className="text-[var(--muted)]">
@@ -30,6 +31,9 @@ export default function CallsPage() {
             <StatusBadge key={`${call.id}-outcome`} status={call.outcome === "handoff" ? "warning" : "healthy"} label={call.outcome} />,
             <p key={`${call.id}-confidence`} className="font-medium text-[var(--foreground)]">
               {formatPercent(call.confidence * 100)}
+            </p>,
+            <p key={`${call.id}-latency`} className="font-medium text-[var(--foreground)]">
+              {call.latencyMs ? `${call.latencyMs} ms` : "n/a"}
             </p>,
             <p key={`${call.id}-summary`} className="max-w-xl leading-7 text-[var(--muted-strong)]">
               {call.summary}
@@ -41,7 +45,7 @@ export default function CallsPage() {
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
             Transcript spotlights
           </p>
-          {recentCalls.slice(0, 2).map((call) => (
+          {snapshot.calls.slice(0, 2).map((call) => (
             <div
               key={call.id}
               className="rounded-[24px] border border-[color:var(--border)] bg-[rgba(24,32,41,0.95)] p-5 text-white"

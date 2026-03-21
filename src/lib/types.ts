@@ -36,6 +36,17 @@ export interface DashboardMetric {
   detail: string;
 }
 
+export interface WorkspaceProfile {
+  name: string;
+  workspaceName: string;
+  mode: BusinessMode;
+  timezone: string;
+  stack: string[];
+  summary: string;
+  handoffTarget?: string;
+  voiceGreeting?: string;
+}
+
 export interface ChecklistItem {
   title: string;
   description: string;
@@ -69,6 +80,9 @@ export interface RecentCall {
   confidence: number;
   capturedAt: string;
   handoffTarget?: string;
+  trustedSources?: string[];
+  actionSummary?: string;
+  latencyMs?: number;
   transcript: TranscriptTurn[];
 }
 
@@ -214,20 +228,33 @@ export interface VoiceWebhookPayload {
   channel: CallChannel;
   caller: string;
   transcript: string;
+  callId?: string;
+  bookingType?: string;
+  selectedSlot?: string;
 }
 
-export interface VoiceSimulationMatch {
+export interface VoiceCallMatch {
   type: "product" | "service" | "slot";
   label: string;
   detail: string;
 }
 
-export interface VoiceSimulationResponse {
+export interface VoiceCallResult {
+  callId: string;
   intent: IntentType;
+  outcome: CallOutcome;
+  confidence: number;
+  latencyMs: number;
   responseText: string;
   trustedSources: string[];
   actionSummary: string;
   requiresHandoff: boolean;
-  matches: VoiceSimulationMatch[];
+  handoffTarget?: string;
+  bookingId?: string;
+  leadId?: string;
+  matches: VoiceCallMatch[];
   pipeline: PipelineStage[];
 }
+
+export type VoiceSimulationMatch = VoiceCallMatch;
+export type VoiceSimulationResponse = VoiceCallResult;
