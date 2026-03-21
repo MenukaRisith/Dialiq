@@ -177,6 +177,9 @@ export interface ProviderCredential {
   environment: string;
   lastValidated: string;
   nextRotation: string;
+  source?: "database" | "environment" | "mock";
+  isEnabled?: boolean;
+  validationMessage?: string | null;
 }
 
 export interface TenantRecord {

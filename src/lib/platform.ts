@@ -14,7 +14,6 @@ import {
   leadCaptures,
   onboardingChecklist,
   productCatalog,
-  providerCredentials,
   recentCalls,
   serviceCatalog,
   teamMembers,
@@ -23,6 +22,7 @@ import {
   weeklyVolume,
   workspaceProfile,
 } from "@/lib/mock-data";
+import { listProviderCredentialsDashboard } from "@/lib/repositories/provider-credentials";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -78,12 +78,15 @@ export const getTeamSnapshot = cache(async () =>
   }),
 );
 
-export const getAdminSnapshot = cache(async () =>
-  clone({
+export const getAdminSnapshot = cache(async () => {
+  const providerDashboard = await listProviderCredentialsDashboard();
+
+  return clone({
     metrics: adminMetrics,
-    providers: providerCredentials,
+    providers: providerDashboard.credentials,
+    database: providerDashboard.database,
     tenants: tenantRecords,
     audit: auditEvents,
     featureFlags,
-  }),
-);
+  });
+});

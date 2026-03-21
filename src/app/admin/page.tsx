@@ -19,8 +19,26 @@ export default async function AdminOverviewPage() {
               Secure by default
             </p>
             <p className="mt-2 text-lg font-semibold tracking-[-0.03em] text-[var(--foreground)]">
-              Masked keys, provider validation, and audit-first operations.
+              Masked keys, MySQL-backed provider control, and audit-first operations.
             </p>
+            <div className="mt-4">
+              <StatusBadge
+                status={
+                  snapshot.database.configured
+                    ? snapshot.database.reachable
+                      ? "healthy"
+                      : "critical"
+                    : "warning"
+                }
+                label={
+                  snapshot.database.configured
+                    ? snapshot.database.reachable
+                      ? "mysql online"
+                      : "mysql unreachable"
+                    : "mysql not configured"
+                }
+              />
+            </div>
           </Panel>
         }
       />

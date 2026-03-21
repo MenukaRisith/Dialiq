@@ -1,38 +1,35 @@
-import { DataTable } from "@/components/ui/data-table";
+import { ProviderCredentialsManager } from "@/components/admin/provider-credentials-manager";
 import { Panel } from "@/components/ui/panel";
 import { SectionIntro } from "@/components/ui/section-intro";
-import { StatusBadge } from "@/components/ui/status-badge";
-import { providerCredentials } from "@/lib/mock-data";
+import { listProviderCredentialsDashboard } from "@/lib/repositories/provider-credentials";
 
-export default function AdminProvidersPage() {
+export default async function AdminProvidersPage() {
+  const providerDashboard = await listProviderCredentialsDashboard();
+
   return (
     <>
       <SectionIntro
         eyebrow="Providers"
         title="Secure provider credentials, model routing, and validation."
         description="The internal admin area keeps raw secrets out of normal workspace views. Operators can inspect health, rotate credentials, and manage routing without exposing sensitive values."
+        aside={
+          <Panel className="space-y-3 p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
+              Source priority
+            </p>
+            <p className="text-lg font-semibold tracking-[-0.03em] text-[var(--foreground)]">
+              MySQL-managed secrets override environment fallbacks.
+            </p>
+            <p className="text-sm leading-7 text-[var(--muted-strong)]">
+              This keeps provider operations manageable from the admin panel without losing a safe env-based bootstrap path.
+            </p>
+          </Panel>
+        }
       />
 
-      <DataTable
-        caption="Masked provider credentials"
-        headers={["Provider", "Purpose", "Environment", "Health", "Rotation"]}
-        rows={providerCredentials.map((provider) => [
-          <div key={`${provider.id}-provider`} className="space-y-1">
-            <p className="font-semibold text-[var(--foreground)]">{provider.provider}</p>
-            <p className="font-mono text-xs text-[var(--muted)]">{provider.maskedValue}</p>
-          </div>,
-          <p key={`${provider.id}-purpose`} className="max-w-sm leading-7 text-[var(--muted-strong)]">
-            {provider.purpose}
-          </p>,
-          <p key={`${provider.id}-environment`} className="text-[var(--foreground)]">
-            {provider.environment}
-          </p>,
-          <StatusBadge key={`${provider.id}-status`} status={provider.status} />,
-          <div key={`${provider.id}-rotation`} className="space-y-1">
-            <p className="text-[var(--foreground)]">{provider.nextRotation}</p>
-            <p className="text-xs text-[var(--muted)]">Validated {provider.lastValidated}</p>
-          </div>,
-        ])}
+      <ProviderCredentialsManager
+        credentials={providerDashboard.credentials}
+        database={providerDashboard.database}
       />
 
       <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -48,7 +45,7 @@ export default function AdminProvidersPage() {
               OpenRouter to gpt-5.4-mini
             </h2>
             <p className="mt-4 text-sm leading-7 text-white/78">
-              Reasoning sits behind the application layer so the model can classify intent and decide on tool usage, but all real-world actions remain enforced by backend policy and provider-specific validation.
+              Reasoning sits behind the application layer so the model can classify intent and decide on tool usage, but all real-world actions remain enforced by backend policy, provider-specific validation, and credential source precedence.
             </p>
           </div>
         </Panel>
@@ -62,6 +59,7 @@ export default function AdminProvidersPage() {
             "Allow operators to validate, rotate, enable, and disable credentials intentionally.",
             "Keep provider status visible so failures in STT, TTS, telephony, or calendar access are obvious.",
             "Separate platform provider keys from tenant-specific OAuth connections and integrations.",
+            "Use environment variables for bootstrap and MySQL-backed encrypted secrets for day-two operations.",
           ].map((rule) => (
             <div
               key={rule}

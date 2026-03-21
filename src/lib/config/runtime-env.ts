@@ -14,6 +14,8 @@ const optionalUrl = z.preprocess(blankToUndefined, z.string().url().optional());
 
 export const runtimeEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  DATABASE_URL: optionalString,
+  APP_ENCRYPTION_KEY: optionalString,
   NEXT_PUBLIC_APP_URL: optionalUrl,
   DIALIQ_APP_NAME: optionalString,
   DIALIQ_MOCK_MODE: z.preprocess(blankToUndefined, z.enum(["true", "false"]).optional()),

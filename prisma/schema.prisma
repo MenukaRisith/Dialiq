@@ -1,0 +1,216 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum BusinessMode {
+  PRODUCT
+  SERVICE
+  HYBRID
+}
+
+enum KnowledgeSourceType {
+  WEBSITE
+  FAQ
+  PDF
+  CATALOG
+  DOCUMENT
+  STRUCTURED_SERVICE
+}
+
+enum CallChannel {
+  PHONE
+  WHATSAPP_VOICE
+}
+
+enum CallOutcome {
+  RESOLVED
+  BOOKED
+  LEAD_CAPTURED
+  HANDOFF
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  HANDOFF
+}
+
+enum BookingStatus {
+  CONFIRMED
+  AWAITING_CONFIRMATION
+  CANCELLED
+}
+
+enum CredentialProvider {
+  OPENROUTER
+  TWILIO
+  DEEPGRAM
+  ELEVENLABS
+  GOOGLE
+  CRM
+}
+
+enum ProviderCredentialStatus {
+  HEALTHY
+  WARNING
+  CRITICAL
+  INACTIVE
+}
+
+enum AuditLevel {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  role      String   @default("ADMIN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Business {
+  id        String       @id @default(cuid())
+  name      String
+  slug      String       @unique
+  mode      BusinessMode
+  timezone  String
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  workspaces Workspace[]
+}
+
+model Workspace {
+  id               String            @id @default(cuid())
+  businessId       String
+  name             String
+  summary          String
+  knowledgeSources KnowledgeSource[]
+  agents           Agent[]
+  calls            Call[]
+  bookings         Booking[]
+  leads            Lead[]
+  business         Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model Agent {
+  id          String    @id @default(cuid())
+  workspaceId String
+  name        String
+  greeting    String
+  tone        String
+  modelRouter String    @default("openrouter")
+  modelName   String    @default("gpt-5.4-mini")
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model KnowledgeSource {
+  id          String              @id @default(cuid())
+  workspaceId String
+  name        String
+  type        KnowledgeSourceType
+  status      String
+  items       Int
+  coverage    Int
+  lastSyncedAt DateTime?
+  trustedFields Json
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+}
+
+model Call {
+  id              String      @id @default(cuid())
+  workspaceId     String
+  externalId      String?     @unique
+  caller          String
+  channel         CallChannel
+  outcome         CallOutcome
+  intent          String
+  summary         String
+  durationSeconds Int
+  confidence      Float
+  transcript      Json
+  workspace       Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+}
+
+model Booking {
+  id          String        @id @default(cuid())
+  workspaceId String
+  customer    String
+  type        String
+  slotAt      DateTime
+  channel     CallChannel
+  status      BookingStatus
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+}
+
+model Lead {
+  id          String     @id @default(cuid())
+  workspaceId String
+  customer    String
+  interest    String
+  status      LeadStatus
+  owner       String
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model ProviderCredential {
+  id               String                   @id @default(cuid())
+  provider         CredentialProvider
+  environment      String                   @default("Production")
+  purpose          String
+  encryptedValue   String
+  maskedValue      String
+  isEnabled        Boolean                  @default(true)
+  status           ProviderCredentialStatus @default(HEALTHY)
+  validationMessage String?
+  lastValidatedAt  DateTime?
+  nextRotationAt   DateTime?
+  rotatedAt        DateTime?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  auditLogs        AuditLog[]
+
+  @@unique([provider, environment], map: "provider_environment_unique")
+}
+
+model FeatureFlag {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String
+  rollout     String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id                   String              @id @default(cuid())
+  actor                String
+  action               String
+  target               String
+  level                AuditLevel          @default(INFO)
+  details              Json?
+  providerCredentialId String?
+  providerCredential   ProviderCredential? @relation(fields: [providerCredentialId], references: [id], onDelete: SetNull)
+  createdAt            DateTime            @default(now())
+}
