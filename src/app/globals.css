@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4efe7;
+  --foreground: #182029;
+  --surface: rgba(255, 251, 246, 0.9);
+  --surface-strong: rgba(255, 248, 240, 0.98);
+  --surface-ink: rgba(25, 32, 40, 0.94);
+  --muted: #637080;
+  --muted-strong: #445160;
+  --border: rgba(100, 115, 134, 0.18);
+  --border-strong: rgba(100, 115, 134, 0.32);
+  --accent: #b6632a;
+  --accent-soft: rgba(182, 99, 42, 0.1);
+  --green: #1f7a5e;
+  --green-soft: rgba(31, 122, 94, 0.1);
+  --amber: #a86819;
+  --amber-soft: rgba(168, 104, 25, 0.12);
+  --red: #aa4f42;
+  --red-soft: rgba(170, 79, 66, 0.12);
+  --shadow-card: 0 24px 60px rgba(42, 48, 56, 0.12);
+  --shadow-soft: 0 16px 32px rgba(42, 48, 56, 0.08);
+  --radius-lg: 28px;
+  --radius-md: 22px;
+  --radius-sm: 16px;
+  --max-width: 1560px;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-manrope);
+  --font-mono: var(--font-plex-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(182, 99, 42, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(24, 32, 41, 0.08), transparent 22%),
+    linear-gradient(180deg, #f8f3ec 0%, #f3ede5 48%, #f6f2ea 100%);
+  color: var(--foreground);
+  font-family: var(--font-sans), sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(182, 99, 42, 0.2);
+  color: var(--foreground);
+}
+
+a,
+button,
+input,
+textarea,
+select {
+  transition:
+    color 180ms var(--ease-out),
+    border-color 180ms var(--ease-out),
+    background-color 180ms var(--ease-out),
+    transform 180ms var(--ease-out),
+    box-shadow 180ms var(--ease-out);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(182, 99, 42, 0.55);
+  outline-offset: 3px;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(99, 112, 128, 0.35);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dialiq-grid {
+  background-image:
+    linear-gradient(rgba(24, 32, 41, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(24, 32, 41, 0.045) 1px, transparent 1px);
+  background-position: center;
+  background-size: 32px 32px;
+}
+
+.dialiq-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.dialiq-glow::before {
+  position: absolute;
+  inset: -1px;
+  z-index: 0;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at top right, rgba(182, 99, 42, 0.14), transparent 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.45), transparent 50%);
+  content: "";
+  pointer-events: none;
+}
+
+.rise-in {
+  animation: rise-in 720ms var(--ease-out) both;
+  animation-delay: calc(var(--delay, 0) * 90ms);
+}
+
+.grain-overlay::after {
+  position: absolute;
+  inset: 0;
+  opacity: 0.16;
+  background-image:
+    radial-gradient(circle at 1px 1px, rgba(24, 32, 41, 0.08) 1px, transparent 0),
+    radial-gradient(circle at 3px 4px, rgba(255, 255, 255, 0.52) 1px, transparent 0);
+  background-size: 14px 14px, 22px 22px;
+  content: "";
+  pointer-events: none;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .rise-in {
+    animation: none;
+  }
+
+  a,
+  button,
+  input,
+  textarea,
+  select {
+    transition: none;
+  }
+}
