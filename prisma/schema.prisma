@@ -100,6 +100,7 @@ model Workspace {
   agents          Agent[]
   calls           Call[]
   bookings        Booking[]
+  calendarConnections CalendarConnection[]
   leads           Lead[]
   products        Product[]
   services        ServiceOffering[]
@@ -165,6 +166,7 @@ model Booking {
   customer    String
   type        String
   slotAt      DateTime
+  externalEventId String?
   channel     CallChannel
   status      BookingStatus
   notes       String?
@@ -231,6 +233,23 @@ model BookingTypeConfig {
   workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
+}
+
+model CalendarConnection {
+  id                   String   @id @default(cuid())
+  workspaceId          String
+  provider             String   @default("google")
+  accountEmail         String?
+  calendarId           String   @default("primary")
+  encryptedRefreshToken String
+  scope                Json
+  connectedAt          DateTime @default(now())
+  lastValidatedAt      DateTime?
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@unique([workspaceId, provider], map: "workspace_provider_unique")
 }
 
 model ProviderCredential {

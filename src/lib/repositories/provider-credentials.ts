@@ -1,5 +1,3 @@
-import "server-only";
-
 import {
   AuditLevel,
   CredentialProvider,
@@ -8,7 +6,12 @@ import {
 
 import { AppError } from "@/lib/api/route-handler";
 import { env, providerReadiness as envProviderReadiness } from "@/lib/config/env";
-import { getDatabaseHealth, getPrismaClient, isDatabaseConfigured } from "@/lib/db/prisma";
+import {
+  getDatabaseHealth,
+  getPrismaClient,
+  isDatabaseConfigured,
+  withDatabaseTimeout,
+} from "@/lib/db/prisma";
 import { logError } from "@/lib/observability/logger";
 import { providerCatalog, type ProviderCode } from "@/lib/provider-catalog";
 import { encryptSecret, maskSecret } from "@/lib/security/encryption";
@@ -161,9 +164,12 @@ export async function listProviderCredentialsDashboard(): Promise<ProviderCreden
 
   try {
     const prisma = getPrismaClient();
-    const records = await prisma.providerCredential.findMany({
-      orderBy: [{ provider: "asc" }, { environment: "asc" }],
-    });
+    const records = await withDatabaseTimeout(
+      prisma.providerCredential.findMany({
+        orderBy: [{ provider: "asc" }, { environment: "asc" }],
+      }),
+      "Provider credential dashboard read",
+    );
 
     if (records.length === 0) {
       return {
@@ -216,7 +222,10 @@ export async function getResolvedProviderReadiness(): Promise<ResolvedProviderRe
 
   try {
     const prisma = getPrismaClient();
-    const records = await prisma.providerCredential.findMany();
+    const records = await withDatabaseTimeout(
+      prisma.providerCredential.findMany(),
+      "Provider readiness resolution",
+    );
 
     return envProviderReadiness.map((provider) => {
       const catalog = providerCatalog.find(
@@ -291,14 +300,17 @@ export async function saveProviderCredential(input: SaveProviderCredentialInput)
   const environment = input.environment.trim() || "Production";
   const catalog = findCatalogEntry(provider);
 
-  const existing = await prisma.providerCredential.findUnique({
-    where: {
-      provider_environment: {
-        provider,
-        environment,
+  const existing = await withDatabaseTimeout(
+    prisma.providerCredential.findUnique({
+      where: {
+        provider_environment: {
+          provider,
+          environment,
+        },
       },
-    },
-  });
+    }),
+    "Provider credential lookup",
+  );
 
   const secret = input.secret?.trim();
   const encryptedValue =
@@ -315,58 +327,64 @@ export async function saveProviderCredential(input: SaveProviderCredentialInput)
     });
   }
 
-  const record = await prisma.providerCredential.upsert({
-    where: {
-      provider_environment: {
+  const record = await withDatabaseTimeout(
+    prisma.providerCredential.upsert({
+      where: {
+        provider_environment: {
+          provider,
+          environment,
+        },
+      },
+      update: {
+        purpose: input.purpose.trim() || catalog?.purpose || "Provider credential",
+        encryptedValue,
+        maskedValue,
+        isEnabled: input.enabled,
+        status: input.enabled
+          ? ProviderCredentialStatus.HEALTHY
+          : ProviderCredentialStatus.INACTIVE,
+        validationMessage: null,
+        lastValidatedAt: new Date(),
+        nextRotationAt: input.nextRotationAt
+          ? new Date(input.nextRotationAt)
+          : null,
+        rotatedAt: new Date(),
+      },
+      create: {
         provider,
         environment,
+        purpose: input.purpose.trim() || catalog?.purpose || "Provider credential",
+        encryptedValue,
+        maskedValue,
+        isEnabled: input.enabled,
+        status: input.enabled
+          ? ProviderCredentialStatus.HEALTHY
+          : ProviderCredentialStatus.INACTIVE,
+        lastValidatedAt: new Date(),
+        nextRotationAt: input.nextRotationAt
+          ? new Date(input.nextRotationAt)
+          : null,
+        rotatedAt: new Date(),
       },
-    },
-    update: {
-      purpose: input.purpose.trim() || catalog?.purpose || "Provider credential",
-      encryptedValue,
-      maskedValue,
-      isEnabled: input.enabled,
-      status: input.enabled
-        ? ProviderCredentialStatus.HEALTHY
-        : ProviderCredentialStatus.INACTIVE,
-      validationMessage: null,
-      lastValidatedAt: new Date(),
-      nextRotationAt: input.nextRotationAt
-        ? new Date(input.nextRotationAt)
-        : null,
-      rotatedAt: new Date(),
-    },
-    create: {
-      provider,
-      environment,
-      purpose: input.purpose.trim() || catalog?.purpose || "Provider credential",
-      encryptedValue,
-      maskedValue,
-      isEnabled: input.enabled,
-      status: input.enabled
-        ? ProviderCredentialStatus.HEALTHY
-        : ProviderCredentialStatus.INACTIVE,
-      lastValidatedAt: new Date(),
-      nextRotationAt: input.nextRotationAt
-        ? new Date(input.nextRotationAt)
-        : null,
-      rotatedAt: new Date(),
-    },
-  });
+    }),
+    "Provider credential save",
+  );
 
-  await prisma.auditLog.create({
-    data: {
-      actor: input.actor ?? "Platform admin",
-      action: existing ? "Updated provider credential" : "Created provider credential",
-      target: `${catalog?.label ?? provider} (${environment})`,
-      level: AuditLevel.INFO,
-      providerCredentialId: record.id,
-      details: {
-        source: "admin-panel",
+  await withDatabaseTimeout(
+    prisma.auditLog.create({
+      data: {
+        actor: input.actor ?? "Platform admin",
+        action: existing ? "Updated provider credential" : "Created provider credential",
+        target: `${catalog?.label ?? provider} (${environment})`,
+        level: AuditLevel.INFO,
+        providerCredentialId: record.id,
+        details: {
+          source: "admin-panel",
+        },
       },
-    },
-  });
+    }),
+    "Provider credential audit write",
+  );
 
   return mapRecord(record);
 }
@@ -380,33 +398,44 @@ export async function toggleProviderCredential(id: string, enabled: boolean) {
   }
 
   const prisma = getPrismaClient();
-  const record = await prisma.providerCredential.update({
-    where: { id },
-    data: {
-      isEnabled: enabled,
-      status: enabled
-        ? ProviderCredentialStatus.HEALTHY
-        : ProviderCredentialStatus.INACTIVE,
-      lastValidatedAt: new Date(),
-    },
-  });
+  const record = await withDatabaseTimeout(
+    prisma.providerCredential.update({
+      where: { id },
+      data: {
+        isEnabled: enabled,
+        status: enabled
+          ? ProviderCredentialStatus.HEALTHY
+          : ProviderCredentialStatus.INACTIVE,
+        lastValidatedAt: new Date(),
+      },
+    }),
+    "Provider credential toggle",
+  );
 
-  await prisma.auditLog.create({
-    data: {
-      actor: "Platform admin",
-      action: enabled ? "Enabled provider credential" : "Disabled provider credential",
-      target: `${record.provider} (${record.environment})`,
-      level: AuditLevel.INFO,
-      providerCredentialId: record.id,
-    },
-  });
+  await withDatabaseTimeout(
+    prisma.auditLog.create({
+      data: {
+        actor: "Platform admin",
+        action: enabled ? "Enabled provider credential" : "Disabled provider credential",
+        target: `${record.provider} (${record.environment})`,
+        level: AuditLevel.INFO,
+        providerCredentialId: record.id,
+      },
+    }),
+    "Provider credential toggle audit write",
+  );
 
   return mapRecord(record);
 }
 
 export async function getOperationalReadiness() {
+  const [database, providers] = await Promise.all([
+    getDatabaseHealth(),
+    getResolvedProviderReadiness(),
+  ]);
+
   return {
-    database: await getDatabaseHealth(),
-    providers: await getResolvedProviderReadiness(),
+    database,
+    providers,
   };
 }

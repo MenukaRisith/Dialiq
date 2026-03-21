@@ -11,6 +11,10 @@ const blankToUndefined = (value: unknown) => {
 
 const optionalString = z.preprocess(blankToUndefined, z.string().min(1).optional());
 const optionalUrl = z.preprocess(blankToUndefined, z.string().url().optional());
+const optionalPositiveInteger = z.preprocess(
+  blankToUndefined,
+  z.coerce.number().int().positive().optional(),
+);
 
 export const runtimeEnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -19,15 +23,26 @@ export const runtimeEnvSchema = z.object({
   NEXT_PUBLIC_APP_URL: optionalUrl,
   DIALIQ_APP_NAME: optionalString,
   DIALIQ_MOCK_MODE: z.preprocess(blankToUndefined, z.enum(["true", "false"]).optional()),
+  DIALIQ_ALLOW_INSECURE_TWILIO_SIGNATURE: z.preprocess(
+    blankToUndefined,
+    z.enum(["true", "false"]).optional(),
+  ),
+  DIALIQ_DATABASE_TIMEOUT_MS: optionalPositiveInteger,
+  DIALIQ_PROVIDER_CONNECT_TIMEOUT_MS: optionalPositiveInteger,
+  DIALIQ_REASONING_TIMEOUT_MS: optionalPositiveInteger,
   OPENROUTER_API_KEY: optionalString,
+  OPENROUTER_MODEL: optionalString,
   TWILIO_ACCOUNT_SID: optionalString,
   TWILIO_AUTH_TOKEN: optionalString,
   TWILIO_PHONE_NUMBER: optionalString,
   DEEPGRAM_API_KEY: optionalString,
   ELEVENLABS_API_KEY: optionalString,
+  ELEVENLABS_VOICE_ID: optionalString,
+  ELEVENLABS_MODEL_ID: optionalString,
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
   GOOGLE_REDIRECT_URI: optionalUrl,
+  GOOGLE_DEFAULT_CALENDAR_ID: optionalString,
   CRM_API_KEY: optionalString,
 });
 

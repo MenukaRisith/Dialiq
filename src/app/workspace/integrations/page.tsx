@@ -1,11 +1,15 @@
+import { ButtonLink } from "@/components/ui/button-link";
 import { DataTable } from "@/components/ui/data-table";
 import { Panel } from "@/components/ui/panel";
 import { SectionIntro } from "@/components/ui/section-intro";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { getIntegrationSnapshot } from "@/lib/platform";
+import { getGoogleCalendarConnectionStatus } from "@/lib/repositories/calendar-connections";
+import { DEFAULT_TENANT_ID } from "@/lib/repositories/workspace-operations";
 
 export default async function IntegrationsPage() {
   const snapshot = await getIntegrationSnapshot();
+  const googleStatus = await getGoogleCalendarConnectionStatus(DEFAULT_TENANT_ID);
 
   return (
     <>
@@ -44,6 +48,37 @@ export default async function IntegrationsPage() {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+        <Panel className="space-y-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
+                Google Calendar connection
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
+                Real booking writes depend on a live OAuth connection.
+              </h2>
+            </div>
+            <StatusBadge
+              status={googleStatus.connected ? "healthy" : "warning"}
+              label={googleStatus.connected ? "connected" : "not connected"}
+            />
+          </div>
+          <div className="rounded-[24px] border border-[color:var(--border)] bg-white/60 p-5">
+            <p className="text-sm leading-7 text-[var(--muted-strong)]">
+              {googleStatus.connected
+                ? `Connected as ${googleStatus.accountEmail ?? "Google account"} on calendar ${googleStatus.calendarId ?? "primary"}.`
+                : "Connect Google Calendar before enabling live booking confirmation. Until then, Dialiq should offer slots but avoid confirming writes."}
+            </p>
+            {!googleStatus.connected ? (
+              <div className="mt-4">
+                <ButtonLink href={`/api/integrations/google/connect?workspaceId=${DEFAULT_TENANT_ID}`}>
+                  Connect Google Calendar
+                </ButtonLink>
+              </div>
+            ) : null}
+          </div>
+        </Panel>
+
         <Panel className="space-y-5">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
             Voice route map

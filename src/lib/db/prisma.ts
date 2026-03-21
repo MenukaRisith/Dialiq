@@ -1,8 +1,6 @@
-import "server-only";
-
 import { PrismaClient } from "@prisma/client";
 
-import { env } from "@/lib/config/env";
+import { appConfig, env } from "@/lib/config/env";
 
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
@@ -26,6 +24,33 @@ export function getPrismaClient() {
   return globalForPrisma.prisma;
 }
 
+export async function withDatabaseTimeout<T>(
+  operation: Promise<T>,
+  operationName: string,
+) {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(
+            new Error(
+              `${operationName} timed out after ${appConfig.databaseTimeoutMs}ms.`,
+            ),
+          );
+        }, appConfig.databaseTimeoutMs);
+        timeoutHandle.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 export async function getDatabaseHealth() {
   if (!isDatabaseConfigured()) {
     return {
@@ -37,7 +62,7 @@ export async function getDatabaseHealth() {
 
   try {
     const prisma = getPrismaClient();
-    await prisma.$queryRaw`SELECT 1`;
+    await withDatabaseTimeout(prisma.$queryRaw`SELECT 1`, "Database health check");
 
     return {
       configured: true,

@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "cross-env NODE_ENV=development tsx server.ts",
     "build": "next build",
-    "start": "next start",
+    "start": "cross-env NODE_ENV=production tsx server.ts",
     "lint": "eslint",
     "test": "vitest run",
     "postinstall": "prisma generate",
@@ -16,11 +16,14 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",
+    "googleapis": "^171.4.0",
     "lucide-react": "^0.577.0",
     "next": "16.2.1",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
+    "twilio": "^5.13.0",
+    "ws": "^8.19.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -28,10 +31,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
+    "cross-env": "^10.1.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
     "prisma": "^6.19.2",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5",
     "vitest": "^4.1.0"
   }

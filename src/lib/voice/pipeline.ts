@@ -1,6 +1,9 @@
 import { z } from "zod";
 
+import { appConfig } from "@/lib/config/env";
 import { voicePipeline } from "@/lib/mock-data";
+import { createGoogleCalendarEvent } from "@/lib/providers/google-calendar";
+import { composeGroundedVoiceReply } from "@/lib/providers/openrouter";
 import {
   createBookingRecord,
   createLeadRecord,
@@ -359,7 +362,57 @@ function buildBookingOffer(bookingType: BookingType) {
   };
 }
 
-function slotToDate(slot: string) {
+function getOffsetMinutes(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "shortOffset",
+    hour: "2-digit",
+  }).formatToParts(date);
+  const zoneName = parts.find((part) => part.type === "timeZoneName")?.value ?? "GMT+0";
+  const match = zoneName.match(/GMT([+-])(\d{1,2})(?::?(\d{2}))?/i);
+
+  if (!match) {
+    return 0;
+  }
+
+  const sign = match[1] === "-" ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3] ?? "0");
+
+  return sign * (hours * 60 + minutes);
+}
+
+function zonedDate(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  timeZone: string,
+) {
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
+  const offsetMinutes = getOffsetMinutes(utcGuess, timeZone);
+
+  return new Date(utcGuess.getTime() - offsetMinutes * 60000);
+}
+
+function getDatePartsInTimeZone(date: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+
+  return {
+    year: Number(parts.find((part) => part.type === "year")?.value ?? date.getUTCFullYear()),
+    month: Number(parts.find((part) => part.type === "month")?.value ?? date.getUTCMonth() + 1),
+    day: Number(parts.find((part) => part.type === "day")?.value ?? date.getUTCDate()),
+  };
+}
+
+function slotToDate(slot: string, timeZone = "UTC") {
   const spoken = spokenSlotLabel(slot);
   const match = spoken.match(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) at (\d{1,2})(?::(\d{2}))? (AM|PM)$/i);
 
@@ -370,18 +423,48 @@ function slotToDate(slot: string) {
   const weekdays = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
   const targetDay = weekdays.indexOf(match[1].toLowerCase());
   const today = new Date();
-  const currentDay = today.getDay();
+  const currentWeekdayLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "long",
+  })
+    .format(today)
+    .toLowerCase();
+  const currentDay = weekdays.indexOf(currentWeekdayLabel);
   const deltaDays = (targetDay - currentDay + 7) % 7 || 7;
 
-  const slotDate = new Date(today);
-  slotDate.setDate(today.getDate() + deltaDays);
+  const targetDate = new Date(today.getTime() + deltaDays * 86400000);
   let hour = Number(match[2]) % 12;
   if (match[4].toUpperCase() === "PM") {
     hour += 12;
   }
 
-  slotDate.setHours(hour, match[3] ? Number(match[3]) : 0, 0, 0);
-  return slotDate;
+  const { year, month, day } = getDatePartsInTimeZone(targetDate, timeZone);
+
+  return zonedDate(year, month, day, hour, match[3] ? Number(match[3]) : 0, timeZone);
+}
+
+async function maybeComposeLiveReply(input: {
+  callerTranscript: string;
+  intent: IntentType;
+  fallbackResponse: string;
+  trustedSources: string[];
+  actionSummary: string;
+  requiresHandoff: boolean;
+  matches: VoiceCallMatch[];
+}) {
+  if (appConfig.isMockMode) {
+    return input.fallbackResponse;
+  }
+
+  return composeGroundedVoiceReply({
+    callerTranscript: input.callerTranscript,
+    intent: input.intent,
+    fallbackResponse: input.fallbackResponse,
+    trustedSources: input.trustedSources,
+    actionSummary: input.actionSummary,
+    requiresHandoff: input.requiresHandoff,
+    matches: input.matches,
+  });
 }
 
 function buildSummary(outcome: CallOutcome, responseText: string, actionSummary: string) {
@@ -449,29 +532,78 @@ export async function processInboundVoiceCall(
       const slot = requestedSlot;
 
       if (slot) {
-        const booking = await createBookingRecord({
-          workspaceId: workspace.workspaceId,
-          customer: payload.caller,
-          type: bookingType.name,
-          slotAt: slotToDate(slot.raw),
-          channel: payload.channel,
-          notes: `Created from inbound voice call for ${payload.tenantId}.`,
-          status: "confirmed",
-        });
+        const slotAt = slotToDate(slot.raw, workspace.profile.timezone);
 
-        bookingId = booking.id;
-        outcome = "booked";
-        requiresHandoff = false;
-        toolLabel = "Google Calendar create event";
-        matches = [
-          {
-            type: "slot",
-            label: slot.spoken,
-            detail: `${bookingType.name} - calendar slot`,
-          },
-        ];
-        responseText = `Perfect. Your ${bookingType.name.toLowerCase()} has been booked for ${slot.spoken}. You're all set.`;
-        actionSummary = "Confirmed the caller's selected slot and created a booking record.";
+        if (appConfig.isMockMode) {
+          const booking = await createBookingRecord({
+            workspaceId: workspace.workspaceId,
+            customer: payload.caller,
+            type: bookingType.name,
+            slotAt,
+            channel: payload.channel,
+            notes: `Mock booking created from inbound voice call for ${payload.tenantId}.`,
+            status: "confirmed",
+          });
+
+          bookingId = booking.id;
+          outcome = "booked";
+          requiresHandoff = false;
+          toolLabel = "Google Calendar create event";
+          matches = [
+            {
+              type: "slot",
+              label: slot.spoken,
+              detail: `${bookingType.name} - calendar slot`,
+            },
+          ];
+          responseText = `Perfect. Your ${bookingType.name.toLowerCase()} has been booked for ${slot.spoken}. You're all set.`;
+          actionSummary = "Confirmed the caller's selected slot and created a booking record.";
+        } else {
+          try {
+            const event = await createGoogleCalendarEvent({
+              workspaceId: workspace.workspaceId,
+              summary: `${bookingType.name} with ${payload.caller}`,
+              description: `Inbound voice booking created by Dialiq for workspace ${payload.tenantId}.`,
+              start: slotAt,
+              end: new Date(slotAt.getTime() + bookingType.durationMinutes * 60000),
+              timezone: workspace.profile.timezone,
+            });
+
+            const booking = await createBookingRecord({
+              workspaceId: workspace.workspaceId,
+              customer: payload.caller,
+              type: bookingType.name,
+              slotAt,
+              externalEventId: event.id ?? undefined,
+              channel: payload.channel,
+              notes: `Created from inbound voice call for ${payload.tenantId}.`,
+              status: "confirmed",
+            });
+
+            bookingId = booking.id;
+            outcome = "booked";
+            requiresHandoff = false;
+            toolLabel = "Google Calendar create event";
+            matches = [
+              {
+                type: "slot",
+                label: slot.spoken,
+                detail: `${bookingType.name} - calendar slot`,
+              },
+            ];
+            responseText = `Perfect. Your ${bookingType.name.toLowerCase()} has been booked for ${slot.spoken}. You're all set.`;
+            actionSummary = "Confirmed the caller's selected slot and created a Google Calendar event.";
+          } catch {
+            responseText =
+              "I couldn't confirm that slot against the connected calendar right now, so the safest next step is a callback from the team.";
+            actionSummary =
+              "Calendar confirmation failed, so no booking was created and the call was routed to safe fallback.";
+            requiresHandoff = true;
+            outcome = "handoff";
+            handoffTarget = workspace.profile.handoffTarget;
+            matches = [];
+          }
+        }
       }
     }
 
@@ -569,6 +701,16 @@ export async function processInboundVoiceCall(
     actionSummary = "Captured a callback request as a lead.";
     toolLabel = "CRM lead capture";
   }
+
+  responseText = await maybeComposeLiveReply({
+    callerTranscript: payload.transcript,
+    intent,
+    fallbackResponse: responseText,
+    trustedSources,
+    actionSummary,
+    requiresHandoff,
+    matches,
+  });
 
   const agentTurn = createTurn("agent", responseText, "00:04", toolLabel);
   const transcript = [callerTurn, agentTurn];

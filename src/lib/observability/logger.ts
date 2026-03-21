@@ -1,5 +1,3 @@
-import "server-only";
-
 type LogLevel = "info" | "warn" | "error";
 
 function serializeError(error: unknown) {

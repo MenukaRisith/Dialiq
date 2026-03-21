@@ -1,5 +1,3 @@
-import "server-only";
-
 import {
   BookingStatus as PrismaBookingStatus,
   BusinessMode as PrismaBusinessMode,
@@ -10,8 +8,12 @@ import {
 } from "@prisma/client";
 
 import { AppError } from "@/lib/api/route-handler";
-import { env } from "@/lib/config/env";
-import { getPrismaClient, isDatabaseConfigured } from "@/lib/db/prisma";
+import { appConfig, env } from "@/lib/config/env";
+import {
+  getPrismaClient,
+  isDatabaseConfigured,
+  withDatabaseTimeout,
+} from "@/lib/db/prisma";
 import {
   analyticsBreakdown as mockAnalyticsBreakdown,
   bookingTypes as mockBookingTypes,
@@ -29,6 +31,7 @@ import {
   weeklyVolume as mockWeeklyVolume,
   workspaceProfile as mockWorkspaceProfile,
 } from "@/lib/mock-data";
+import { logError } from "@/lib/observability/logger";
 import type {
   AgentRule,
   AnalyticsBar,
@@ -96,6 +99,7 @@ export interface CreateBookingInput {
   customer: string;
   type: string;
   slotAt: Date;
+  externalEventId?: string;
   channel: CallChannel;
   notes?: string;
   status?: "confirmed" | "awaiting-confirmation" | "cancelled";
@@ -706,134 +710,159 @@ async function readWorkspaceOperationalData(tenantId = DEFAULT_TENANT_ID): Promi
     return fallbackOperationalData();
   }
 
-  if (tenantId === DEFAULT_TENANT_ID) {
-    await seedDefaultWorkspace();
-  }
+  try {
+    if (tenantId === DEFAULT_TENANT_ID) {
+      await withDatabaseTimeout(seedDefaultWorkspace(), "Default workspace seed");
+    }
 
-  const prisma = getPrismaClient();
-  const workspace = await prisma.workspace.findUnique({
-    where: { slug: tenantId },
-    include: {
-      business: true,
-      knowledgeSources: {
-        orderBy: { createdAt: "asc" },
-      },
-      products: {
-        where: { isActive: true },
-        orderBy: [{ category: "asc" }, { price: "asc" }],
-      },
-      services: {
-        orderBy: { name: "asc" },
-      },
-      bookingTypes: {
-        orderBy: { createdAt: "asc" },
-      },
-      calls: {
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      },
-      bookings: {
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      },
-      leads: {
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      },
-    },
-  });
+    const prisma = getPrismaClient();
+    const workspace = await withDatabaseTimeout(
+      prisma.workspace.findUnique({
+        where: { slug: tenantId },
+        include: {
+          business: true,
+          knowledgeSources: {
+            orderBy: { createdAt: "asc" },
+          },
+          products: {
+            where: { isActive: true },
+            orderBy: [{ category: "asc" }, { price: "asc" }],
+          },
+          services: {
+            orderBy: { name: "asc" },
+          },
+          bookingTypes: {
+            orderBy: { createdAt: "asc" },
+          },
+          calls: {
+            orderBy: { createdAt: "desc" },
+            take: 20,
+          },
+          bookings: {
+            orderBy: { createdAt: "desc" },
+            take: 20,
+          },
+          leads: {
+            orderBy: { createdAt: "desc" },
+            take: 20,
+          },
+        },
+      }),
+      "Workspace operational read",
+    );
 
-  if (!workspace) {
-    throw new AppError(`Workspace "${tenantId}" was not found.`, {
-      statusCode: 404,
-      code: "WORKSPACE_NOT_FOUND",
+    if (!workspace) {
+      throw new AppError(`Workspace "${tenantId}" was not found.`, {
+        statusCode: 404,
+        code: "WORKSPACE_NOT_FOUND",
+      });
+    }
+
+    const timezone = workspace.business.timezone;
+
+    return {
+      workspaceId: workspace.id,
+      profile: {
+        name: workspace.business.name,
+        workspaceName: workspace.name,
+        mode: mapBusinessMode(workspace.business.mode),
+        timezone,
+        stack: clone(mockWorkspaceProfile.stack),
+        summary: workspace.summary,
+        handoffTarget: workspace.handoffTarget,
+        voiceGreeting: workspace.voiceGreeting,
+      },
+      knowledgeSources: workspace.knowledgeSources.map((source) => ({
+        id: source.id,
+        name: source.name,
+        type: mapKnowledgeSourceType(source.type),
+        status: source.status as KnowledgeSource["status"],
+        items: source.items,
+        coverage: source.coverage,
+        lastSynced: source.lastSyncedAt ? formatRelativeTime(source.lastSyncedAt) : "Not synced",
+        trustedFields: asStringArray(source.trustedFields),
+      })),
+      products: workspace.products.map((product) => ({
+        id: product.externalId ?? product.id,
+        name: product.name,
+        category: product.category,
+        price: product.price,
+        colors: asStringArray(product.colors),
+        features: asStringArray(product.features),
+        stockStatus:
+          product.stockStatus === "connected-live" ? "connected-live" : "not-connected",
+        trustedFields: asStringArray(product.trustedFields),
+      })),
+      services: workspace.services.map((service) => ({
+        id: service.id,
+        name: service.name,
+        description: service.description,
+        durationMinutes: service.durationMinutes,
+        bookingWindow: service.bookingWindow,
+        priceRange: service.priceRange,
+        status: service.status as ServiceRecord["status"],
+      })),
+      bookingTypes: workspace.bookingTypes.map((bookingType) => ({
+        id: bookingType.id,
+        name: bookingType.name,
+        durationMinutes: bookingType.durationMinutes,
+        availability: asStringArray(bookingType.slotLabels).join(", "),
+        confirmationRule: bookingType.confirmationRule,
+        status: bookingType.status as BookingType["status"],
+      })),
+      calls: workspace.calls.map((call) => ({
+        id: call.externalId ?? call.id,
+        caller: call.caller,
+        channel: mapCallChannel(call.channel),
+        outcome: mapCallOutcome(call.outcome),
+        intent: call.intent as IntentType,
+        summary: call.summary,
+        durationSeconds: call.durationSeconds,
+        confidence: call.confidence,
+        capturedAt: call.createdAt.toISOString(),
+        handoffTarget: call.requiresHandoff ? workspace.handoffTarget : undefined,
+        trustedSources: asStringArray(call.trustedSources),
+        actionSummary: call.actionSummary ?? undefined,
+        latencyMs: call.latencyMs,
+        transcript: asTranscriptTurns(call.transcript),
+      })),
+      bookings: workspace.bookings.map((booking) => ({
+        id: booking.id,
+        customer: booking.customer,
+        type: booking.type,
+        slot: formatBookingSlot(booking.slotAt, timezone),
+        source: mapCallChannel(booking.channel),
+        status: mapBookingStatus(booking.status),
+      })),
+      leads: workspace.leads.map((lead) => ({
+        id: lead.id,
+        customer: lead.customer,
+        interest: lead.interest,
+        status: mapLeadStatus(lead.status),
+        owner: lead.owner,
+        capturedAt: formatRelativeTime(lead.createdAt),
+      })),
+    };
+  } catch (error) {
+    logError("workspace_operations.read_failed", error, {
+      tenantId,
+      mockMode: appConfig.isMockMode,
+    });
+
+    if (appConfig.isMockMode) {
+      return fallbackOperationalData();
+    }
+
+    if (error instanceof AppError) {
+      throw error;
+    }
+
+    throw new AppError("Workspace data is temporarily unavailable.", {
+      statusCode: 503,
+      code: "WORKSPACE_DATA_UNAVAILABLE",
+      expose: true,
     });
   }
-
-  const timezone = workspace.business.timezone;
-
-  return {
-    workspaceId: workspace.id,
-    profile: {
-      name: workspace.business.name,
-      workspaceName: workspace.name,
-      mode: mapBusinessMode(workspace.business.mode),
-      timezone,
-      stack: clone(mockWorkspaceProfile.stack),
-      summary: workspace.summary,
-      handoffTarget: workspace.handoffTarget,
-      voiceGreeting: workspace.voiceGreeting,
-    },
-    knowledgeSources: workspace.knowledgeSources.map((source) => ({
-      id: source.id,
-      name: source.name,
-      type: mapKnowledgeSourceType(source.type),
-      status: source.status as KnowledgeSource["status"],
-      items: source.items,
-      coverage: source.coverage,
-      lastSynced: source.lastSyncedAt ? formatRelativeTime(source.lastSyncedAt) : "Not synced",
-      trustedFields: asStringArray(source.trustedFields),
-    })),
-    products: workspace.products.map((product) => ({
-      id: product.externalId ?? product.id,
-      name: product.name,
-      category: product.category,
-      price: product.price,
-      colors: asStringArray(product.colors),
-      features: asStringArray(product.features),
-      stockStatus: product.stockStatus === "connected-live" ? "connected-live" : "not-connected",
-      trustedFields: asStringArray(product.trustedFields),
-    })),
-    services: workspace.services.map((service) => ({
-      id: service.id,
-      name: service.name,
-      description: service.description,
-      durationMinutes: service.durationMinutes,
-      bookingWindow: service.bookingWindow,
-      priceRange: service.priceRange,
-      status: service.status as ServiceRecord["status"],
-    })),
-    bookingTypes: workspace.bookingTypes.map((bookingType) => ({
-      id: bookingType.id,
-      name: bookingType.name,
-      durationMinutes: bookingType.durationMinutes,
-      availability: asStringArray(bookingType.slotLabels).join(", "),
-      confirmationRule: bookingType.confirmationRule,
-      status: bookingType.status as BookingType["status"],
-    })),
-    calls: workspace.calls.map((call) => ({
-      id: call.externalId ?? call.id,
-      caller: call.caller,
-      channel: mapCallChannel(call.channel),
-      outcome: mapCallOutcome(call.outcome),
-      intent: call.intent as IntentType,
-      summary: call.summary,
-      durationSeconds: call.durationSeconds,
-      confidence: call.confidence,
-      capturedAt: call.createdAt.toISOString(),
-      handoffTarget: call.requiresHandoff ? workspace.handoffTarget : undefined,
-      trustedSources: asStringArray(call.trustedSources),
-      actionSummary: call.actionSummary ?? undefined,
-      latencyMs: call.latencyMs,
-      transcript: asTranscriptTurns(call.transcript),
-    })),
-    bookings: workspace.bookings.map((booking) => ({
-      id: booking.id,
-      customer: booking.customer,
-      type: booking.type,
-      slot: formatBookingSlot(booking.slotAt, timezone),
-      source: mapCallChannel(booking.channel),
-      status: mapBookingStatus(booking.status),
-    })),
-    leads: workspace.leads.map((lead) => ({
-      id: lead.id,
-      customer: lead.customer,
-      interest: lead.interest,
-      status: mapLeadStatus(lead.status),
-      owner: lead.owner,
-      capturedAt: formatRelativeTime(lead.createdAt),
-    })),
-  };
 }
 
 function intentDisplayDetail(intent: IntentType) {
@@ -980,63 +1009,70 @@ export async function loadVoiceWorkspaceContext(tenantId = DEFAULT_TENANT_ID) {
 }
 
 export async function createLeadRecord(input: CreateLeadInput) {
-  if (!isDatabaseConfigured() || env.NODE_ENV === "test") {
+  if (!isDatabaseConfigured() || env.NODE_ENV === "test" || appConfig.isMockMode) {
     return {
       id: `lead-${Date.now()}`,
     };
   }
 
   const prisma = getPrismaClient();
-  const lead = await prisma.lead.create({
-    data: {
-      workspaceId: input.workspaceId,
-      customer: input.customer,
-      interest: input.interest,
-      owner: input.owner,
-      channel: input.channel === "phone" ? "PHONE" : "WHATSAPP_VOICE",
-      notes: input.notes,
-      status:
-        input.status === "qualified"
-          ? "QUALIFIED"
-          : input.status === "handoff"
-            ? "HANDOFF"
-            : "NEW",
-    },
-  });
+  const lead = await withDatabaseTimeout(
+    prisma.lead.create({
+      data: {
+        workspaceId: input.workspaceId,
+        customer: input.customer,
+        interest: input.interest,
+        owner: input.owner,
+        channel: input.channel === "phone" ? "PHONE" : "WHATSAPP_VOICE",
+        notes: input.notes,
+        status:
+          input.status === "qualified"
+            ? "QUALIFIED"
+            : input.status === "handoff"
+              ? "HANDOFF"
+              : "NEW",
+      },
+    }),
+    "Lead record create",
+  );
 
   return lead;
 }
 
 export async function createBookingRecord(input: CreateBookingInput) {
-  if (!isDatabaseConfigured() || env.NODE_ENV === "test") {
+  if (!isDatabaseConfigured() || env.NODE_ENV === "test" || appConfig.isMockMode) {
     return {
       id: `booking-${Date.now()}`,
     };
   }
 
   const prisma = getPrismaClient();
-  const booking = await prisma.booking.create({
-    data: {
-      workspaceId: input.workspaceId,
-      customer: input.customer,
-      type: input.type,
-      slotAt: input.slotAt,
-      channel: input.channel === "phone" ? "PHONE" : "WHATSAPP_VOICE",
-      notes: input.notes,
-      status:
-        input.status === "cancelled"
-          ? "CANCELLED"
-          : input.status === "awaiting-confirmation"
-            ? "AWAITING_CONFIRMATION"
-            : "CONFIRMED",
-    },
-  });
+  const booking = await withDatabaseTimeout(
+    prisma.booking.create({
+      data: {
+        workspaceId: input.workspaceId,
+        customer: input.customer,
+        type: input.type,
+        slotAt: input.slotAt,
+        externalEventId: input.externalEventId,
+        channel: input.channel === "phone" ? "PHONE" : "WHATSAPP_VOICE",
+        notes: input.notes,
+        status:
+          input.status === "cancelled"
+            ? "CANCELLED"
+            : input.status === "awaiting-confirmation"
+              ? "AWAITING_CONFIRMATION"
+              : "CONFIRMED",
+      },
+    }),
+    "Booking record create",
+  );
 
   return booking;
 }
 
 export async function persistVoiceOutcome(input: PersistVoiceOutcomeInput) {
-  if (!isDatabaseConfigured() || env.NODE_ENV === "test") {
+  if (!isDatabaseConfigured() || env.NODE_ENV === "test" || appConfig.isMockMode) {
     return {
       id: input.externalId ?? `call-${Date.now()}`,
       durationSeconds: input.durationSeconds || computeDurationSeconds(input.transcript),
@@ -1044,32 +1080,35 @@ export async function persistVoiceOutcome(input: PersistVoiceOutcomeInput) {
   }
 
   const prisma = getPrismaClient();
-  const call = await prisma.call.create({
-    data: {
-      workspaceId: input.workspaceId,
-      externalId: input.externalId,
-      caller: input.caller,
-      channel: input.channel === "phone" ? "PHONE" : "WHATSAPP_VOICE",
-      outcome:
-        input.outcome === "booked"
-          ? "BOOKED"
-          : input.outcome === "lead-captured"
-            ? "LEAD_CAPTURED"
-            : input.outcome === "handoff"
-              ? "HANDOFF"
-              : "RESOLVED",
-      intent: input.intent,
-      summary: input.summary,
-      durationSeconds: input.durationSeconds || computeDurationSeconds(input.transcript),
-      latencyMs: input.latencyMs,
-      confidence: input.confidence,
-      transcript: toJsonValue(input.transcript),
-      trustedSources: toJsonValue(input.trustedSources),
-      actionSummary: input.actionSummary,
-      requiresHandoff: input.requiresHandoff,
-      matches: toJsonValue(input.matches),
-    },
-  });
+  const call = await withDatabaseTimeout(
+    prisma.call.create({
+      data: {
+        workspaceId: input.workspaceId,
+        externalId: input.externalId,
+        caller: input.caller,
+        channel: input.channel === "phone" ? "PHONE" : "WHATSAPP_VOICE",
+        outcome:
+          input.outcome === "booked"
+            ? "BOOKED"
+            : input.outcome === "lead-captured"
+              ? "LEAD_CAPTURED"
+              : input.outcome === "handoff"
+                ? "HANDOFF"
+                : "RESOLVED",
+        intent: input.intent,
+        summary: input.summary,
+        durationSeconds: input.durationSeconds || computeDurationSeconds(input.transcript),
+        latencyMs: input.latencyMs,
+        confidence: input.confidence,
+        transcript: toJsonValue(input.transcript),
+        trustedSources: toJsonValue(input.trustedSources),
+        actionSummary: input.actionSummary,
+        requiresHandoff: input.requiresHandoff,
+        matches: toJsonValue(input.matches),
+      },
+    }),
+    "Voice outcome persistence",
+  );
 
   return call;
 }
