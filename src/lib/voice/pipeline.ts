@@ -2,8 +2,15 @@ import { z } from "zod";
 
 import { appConfig } from "@/lib/config/env";
 import { voicePipeline } from "@/lib/mock-data";
-import { createGoogleCalendarEvent } from "@/lib/providers/google-calendar";
+import {
+  createGoogleCalendarEvent,
+  getGoogleCalendarAvailableSlots,
+} from "@/lib/providers/google-calendar";
 import { composeGroundedVoiceReply } from "@/lib/providers/openrouter";
+import {
+  retrieveKnowledgeMatches,
+  type RetrievedKnowledgeMatch,
+} from "@/lib/repositories/knowledge-base";
 import {
   createBookingRecord,
   createLeadRecord,
@@ -39,6 +46,8 @@ const SERVICE_KEYWORDS = /\b(service|consult|hours|visit|installation|showroom|d
 const CALLBACK_KEYWORDS = /\b(call me|callback|follow up|follow-up|have someone call|reach out)\b/i;
 const HANDOFF_KEYWORDS = /\b(custom quote|bulk|enterprise|three locations|delivery terms|shipping dates|manager|human|agent|representative)\b/i;
 const LIVE_DATA_KEYWORDS = /\b(in stock|stock|availability today|ship|shipping|delivery|eta|arrive|available now)\b/i;
+const CRITICAL_PRODUCT_FIELD_KEYWORDS = /\b(price|pricing|cost|how much|under|below|less than|eur|usd|\$|in stock|stock|shipping|delivery|eta|arrive)\b/i;
+const CRITICAL_SERVICE_FIELD_KEYWORDS = /\b(price|pricing|cost|how much|duration|minute|minutes|book|booking|calendar|slot|availability)\b/i;
 const CONFIRMATION_KEYWORDS = /\b(works for me|that works|book it|confirm|yes please|sounds good|go ahead)\b/i;
 const SLOT_REFERENCE_KEYWORDS = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|wed|thu|fri|sat|sun)\b/i;
 const TIME_REFERENCE_KEYWORDS = /\b(\d{1,2}(:\d{2})?\s?(am|pm)|\d{1,2}:\d{2})\b/i;
@@ -95,6 +104,14 @@ function extractColor(transcript: string) {
 
 function wantsLiveData(transcript: string) {
   return LIVE_DATA_KEYWORDS.test(transcript);
+}
+
+function requiresStructuredProductAnswer(transcript: string) {
+  return CRITICAL_PRODUCT_FIELD_KEYWORDS.test(transcript);
+}
+
+function requiresStructuredServiceAnswer(transcript: string) {
+  return CRITICAL_SERVICE_FIELD_KEYWORDS.test(transcript);
 }
 
 function wantsCallback(transcript: string) {
@@ -279,6 +296,25 @@ function collectSlots(bookingTypes: BookingType[]) {
   );
 }
 
+function buildSlotCandidates(bookingTypes: BookingType[], timeZone: string) {
+  return bookingTypes.flatMap((bookingType) =>
+    bookingType.availability
+      .split(",")
+      .map((slot) => slot.trim())
+      .filter(Boolean)
+      .map((slot) => {
+        const start = slotToDate(slot, timeZone);
+        return {
+          bookingType,
+          raw: slot,
+          spoken: spokenSlotLabel(slot),
+          start,
+          end: new Date(start.getTime() + bookingType.durationMinutes * 60000),
+        };
+      }),
+  );
+}
+
 function resolveRequestedSlot(bookingTypes: BookingType[], transcript: string, selectedSlot?: string) {
   const normalizedTranscript = normalizeText(selectedSlot ? `${transcript} ${selectedSlot}` : transcript);
   const slots = collectSlots(bookingTypes);
@@ -331,13 +367,12 @@ function pickBookingType(bookingTypes: BookingType[], transcript: string, explic
   return bookingTypes[0];
 }
 
-function buildBookingOffer(bookingType: BookingType) {
-  const slots = bookingType.availability
-    .split(",")
-    .map((slot) => slot.trim())
-    .filter(Boolean)
-    .slice(0, 3)
-    .map(spokenSlotLabel);
+function buildBookingOffer(bookingType: BookingType, slots = bookingType.availability
+  .split(",")
+  .map((slot) => slot.trim())
+  .filter(Boolean)
+  .slice(0, 3)
+  .map(spokenSlotLabel)) {
 
   if (slots.length === 0) {
     return {
@@ -360,6 +395,38 @@ function buildBookingOffer(bookingType: BookingType) {
       detail: `${bookingType.name} - calendar slot`,
     })),
   };
+}
+
+function summarizeKnowledgeAnswer(matches: RetrievedKnowledgeMatch[]) {
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const topMatch = matches[0];
+  const supportingMatch = matches[1];
+  const responseText = supportingMatch
+    ? `From the connected knowledge base, ${topMatch.excerpt} I also found related guidance in ${supportingMatch.sourceLabel}.`
+    : `From the connected knowledge base, ${topMatch.excerpt}`;
+
+  return {
+    responseText,
+    matches: matches.map((match) => ({
+      type: "knowledge" as const,
+      label: match.documentTitle,
+      detail: `${match.sourceLabel} - ${match.excerpt}`,
+    })),
+    trustedSources: Array.from(new Set(matches.map((match) => match.trustedSource))),
+  };
+}
+
+async function findKnowledgeFallback(workspaceId: string, transcript: string) {
+  const matches = await retrieveKnowledgeMatches({
+    workspaceId,
+    query: transcript,
+    limit: 3,
+  });
+
+  return summarizeKnowledgeAnswer(matches);
 }
 
 function getOffsetMinutes(date: Date, timeZone: string) {
@@ -520,6 +587,10 @@ export async function processInboundVoiceCall(
       payload.transcript,
       payload.bookingType,
     );
+    const slotCandidates = buildSlotCandidates(
+      workspace.bookingTypes,
+      workspace.profile.timezone,
+    );
     const requestedSlot = resolveRequestedSlot(
       workspace.bookingTypes,
       payload.transcript,
@@ -529,10 +600,22 @@ export async function processInboundVoiceCall(
     trustedSources = ["Google Calendar booking rules", "Structured service booking types"];
 
     if (bookingType && requestedSlot) {
-      const slot = requestedSlot;
+      const slot =
+        slotCandidates.find(
+          (candidate) =>
+            candidate.raw === requestedSlot.raw &&
+            candidate.bookingType.id === requestedSlot.bookingType.id,
+        ) ?? {
+          ...requestedSlot,
+          start: slotToDate(requestedSlot.raw, workspace.profile.timezone),
+          end: new Date(
+            slotToDate(requestedSlot.raw, workspace.profile.timezone).getTime() +
+              requestedSlot.bookingType.durationMinutes * 60000,
+          ),
+        };
 
       if (slot) {
-        const slotAt = slotToDate(slot.raw, workspace.profile.timezone);
+        const slotAt = slot.start;
 
         if (appConfig.isMockMode) {
           const booking = await createBookingRecord({
@@ -560,6 +643,22 @@ export async function processInboundVoiceCall(
           actionSummary = "Confirmed the caller's selected slot and created a booking record.";
         } else {
           try {
+            const availableSelection = await getGoogleCalendarAvailableSlots({
+              workspaceId: workspace.workspaceId,
+              timezone: workspace.profile.timezone,
+              candidates: [
+                {
+                  label: slot.spoken,
+                  start: slot.start,
+                  end: slot.end,
+                },
+              ],
+            });
+
+            if (availableSelection.length === 0) {
+              throw new Error("Requested slot is no longer available.");
+            }
+
             const event = await createGoogleCalendarEvent({
               workspaceId: workspace.workspaceId,
               summary: `${bookingType.name} with ${payload.caller}`,
@@ -608,24 +707,73 @@ export async function processInboundVoiceCall(
     }
 
     if (bookingId === undefined) {
-      const offer = bookingType
-        ? buildBookingOffer(bookingType)
-        : {
-            responseText:
-              "I can't verify which service to book from the connected records right now, so the safest next step is a human callback.",
-            matches: [] as VoiceCallMatch[],
-          };
+      const fallbackOffer = {
+        responseText:
+          "I can't verify which service to book from the connected records right now, so the safest next step is a human callback.",
+        matches: [] as VoiceCallMatch[],
+      };
 
-      responseText = offer.responseText;
-      matches = offer.matches;
-      requiresHandoff = offer.matches.length === 0;
-      outcome = offer.matches.length === 0 ? "handoff" : "resolved";
-      actionSummary =
-        offer.matches.length === 0
-          ? "Unable to verify bookable slots, recommended human follow-up."
-          : "Offered verified booking slots and awaited explicit confirmation.";
-      handoffTarget = offer.matches.length === 0 ? workspace.profile.handoffTarget : undefined;
-      toolLabel = offer.matches.length > 0 ? "Google Calendar availability" : undefined;
+      if (appConfig.isMockMode) {
+        const bookingOffer = bookingType ? buildBookingOffer(bookingType) : fallbackOffer;
+
+        responseText = bookingOffer.responseText;
+        matches = bookingOffer.matches;
+        requiresHandoff = bookingOffer.matches.length === 0;
+        outcome = bookingOffer.matches.length === 0 ? "handoff" : "resolved";
+        actionSummary =
+          bookingOffer.matches.length === 0
+            ? "Unable to verify bookable slots, recommended human follow-up."
+            : "Offered verified booking slots and awaited explicit confirmation.";
+        handoffTarget =
+          bookingOffer.matches.length === 0 ? workspace.profile.handoffTarget : undefined;
+        toolLabel =
+          bookingOffer.matches.length > 0 ? "Google Calendar availability" : undefined;
+      } else if (bookingType) {
+        try {
+          const candidates = buildSlotCandidates([bookingType], workspace.profile.timezone).slice(0, 6);
+          const availableSlots = await getGoogleCalendarAvailableSlots({
+            workspaceId: workspace.workspaceId,
+            timezone: workspace.profile.timezone,
+            candidates: candidates.map((candidate) => ({
+              label: candidate.spoken,
+              start: candidate.start,
+              end: candidate.end,
+            })),
+          });
+          const spokenSlots = availableSlots.slice(0, 3).map((candidate) => candidate.label);
+          const bookingOffer = buildBookingOffer(bookingType, spokenSlots);
+
+          responseText = bookingOffer.responseText;
+          matches = bookingOffer.matches;
+          requiresHandoff = bookingOffer.matches.length === 0;
+          outcome = bookingOffer.matches.length === 0 ? "handoff" : "resolved";
+          actionSummary =
+            bookingOffer.matches.length === 0
+              ? "Google Calendar returned no open slots for the configured booking windows."
+              : "Read live Google Calendar availability and offered open slots only.";
+          handoffTarget =
+            bookingOffer.matches.length === 0 ? workspace.profile.handoffTarget : undefined;
+          toolLabel =
+            bookingOffer.matches.length > 0 ? "Google Calendar availability" : undefined;
+        } catch {
+          responseText =
+            "I couldn't verify live availability from the connected calendar right now, so the safest next step is a callback from the team.";
+          matches = [];
+          requiresHandoff = true;
+          outcome = "handoff";
+          actionSummary =
+            "Live Google Calendar availability could not be verified, so the flow was routed to safe fallback.";
+          handoffTarget = workspace.profile.handoffTarget;
+        }
+      } else {
+        responseText = fallbackOffer.responseText;
+        matches = fallbackOffer.matches;
+        requiresHandoff = true;
+        outcome = "handoff";
+        actionSummary =
+          "Unable to map the caller request to a known booking type, recommended human follow-up.";
+        handoffTarget = workspace.profile.handoffTarget;
+      }
     }
   } else if (intent === "product-inquiry") {
     const products = filterProducts(workspace.products, payload.transcript);
@@ -649,6 +797,25 @@ export async function processInboundVoiceCall(
         products.length > 0
           ? "Read only verified product data and offered the next safe step."
           : "No safe product match found, recommended human handoff.";
+
+      if (products.length === 0) {
+        if (!requiresStructuredProductAnswer(payload.transcript)) {
+          const knowledgeFallback = await findKnowledgeFallback(
+            workspace.workspaceId,
+            payload.transcript,
+          );
+
+          if (knowledgeFallback) {
+            responseText = `${knowledgeFallback.responseText} Would you like more detail or a callback?`;
+            matches = knowledgeFallback.matches;
+            trustedSources = knowledgeFallback.trustedSources;
+            requiresHandoff = false;
+            outcome = "resolved";
+            actionSummary =
+              "No structured product match existed, so Dialiq answered from retrieved website or document knowledge.";
+          }
+        }
+      }
 
       if (products.length > 0 && wantsCallback(payload.transcript)) {
         const lead = await createLeadRecord({
@@ -682,6 +849,25 @@ export async function processInboundVoiceCall(
         ? "Answered using connected service records only."
         : "Could not verify a service answer safely and recommended a handoff.";
     handoffTarget = services.length === 0 ? workspace.profile.handoffTarget : undefined;
+    if (services.length === 0) {
+      if (!requiresStructuredServiceAnswer(payload.transcript)) {
+        const knowledgeFallback = await findKnowledgeFallback(
+          workspace.workspaceId,
+          payload.transcript,
+        );
+
+        if (knowledgeFallback) {
+          responseText = knowledgeFallback.responseText;
+          matches = knowledgeFallback.matches;
+          trustedSources = knowledgeFallback.trustedSources;
+          requiresHandoff = false;
+          outcome = "resolved";
+          actionSummary =
+            "No structured service record matched, so Dialiq answered from retrieved website or document knowledge.";
+          handoffTarget = undefined;
+        }
+      }
+    }
   } else if (intent === "lead-capture") {
     const lead = await createLeadRecord({
       workspaceId: workspace.workspaceId,
@@ -700,6 +886,20 @@ export async function processInboundVoiceCall(
     trustedSources = ["CRM capture policy"];
     actionSummary = "Captured a callback request as a lead.";
     toolLabel = "CRM lead capture";
+  } else {
+    const knowledgeFallback = await findKnowledgeFallback(
+      workspace.workspaceId,
+      payload.transcript,
+    );
+
+    if (knowledgeFallback) {
+      responseText = knowledgeFallback.responseText;
+      matches = knowledgeFallback.matches;
+      trustedSources = knowledgeFallback.trustedSources;
+      actionSummary = "Answered from retrieved website or document knowledge.";
+      requiresHandoff = false;
+      outcome = "resolved";
+    }
   }
 
   responseText = await maybeComposeLiveReply({

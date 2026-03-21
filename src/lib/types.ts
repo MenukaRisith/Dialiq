@@ -20,6 +20,7 @@ export type KnowledgeSourceType =
   | "catalog"
   | "document"
   | "structured-service";
+export type KnowledgeDocumentKind = "website-page" | "markdown" | "pdf";
 export type IntegrationCategory =
   | "channel"
   | "stt"
@@ -95,6 +96,18 @@ export interface KnowledgeSource {
   lastSynced: string;
   coverage: number;
   trustedFields: string[];
+  sourceUrl?: string | null;
+}
+
+export interface KnowledgeDocumentSummary {
+  id: string;
+  title: string;
+  kind: KnowledgeDocumentKind;
+  sourceLabel: string;
+  excerpt: string;
+  chunkCount: number;
+  updatedAt: string;
+  sourceUrl?: string | null;
 }
 
 export interface ProductRecord {
@@ -234,7 +247,7 @@ export interface VoiceWebhookPayload {
 }
 
 export interface VoiceCallMatch {
-  type: "product" | "service" | "slot";
+  type: "product" | "service" | "slot" | "knowledge";
   label: string;
   detail: string;
 }

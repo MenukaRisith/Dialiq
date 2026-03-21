@@ -22,6 +22,12 @@ enum KnowledgeSourceType {
   STRUCTURED_SERVICE
 }
 
+enum KnowledgeDocumentKind {
+  WEBSITE_PAGE
+  MARKDOWN
+  PDF
+}
+
 enum CallChannel {
   PHONE
   WHATSAPP_VOICE
@@ -89,25 +95,27 @@ model Business {
 }
 
 model Workspace {
-  id              String             @id @default(cuid())
-  businessId      String
-  slug            String             @unique
-  name            String
-  summary         String
-  voiceGreeting   String             @default("Thanks for calling Dialiq. How can I help today?")
-  handoffTarget   String             @default("Sales queue")
-  knowledgeSources KnowledgeSource[]
-  agents          Agent[]
-  calls           Call[]
-  bookings        Booking[]
+  id                  String              @id @default(cuid())
+  businessId          String
+  slug                String              @unique
+  name                String
+  summary             String
+  voiceGreeting       String              @default("Thanks for calling Dialiq. How can I help today?")
+  handoffTarget       String              @default("Sales queue")
+  knowledgeSources    KnowledgeSource[]
+  knowledgeDocuments  KnowledgeDocument[]
+  knowledgeChunks     KnowledgeChunk[]
+  agents              Agent[]
+  calls               Call[]
+  bookings            Booking[]
   calendarConnections CalendarConnection[]
-  leads           Lead[]
-  products        Product[]
-  services        ServiceOffering[]
-  bookingTypes    BookingTypeConfig[]
-  business        Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  leads               Lead[]
+  products            Product[]
+  services            ServiceOffering[]
+  bookingTypes        BookingTypeConfig[]
+  business            Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 }
 
 model Agent {
@@ -124,18 +132,55 @@ model Agent {
 }
 
 model KnowledgeSource {
-  id           String              @id @default(cuid())
-  workspaceId  String
-  name         String
-  type         KnowledgeSourceType
-  status       String
-  items        Int
-  coverage     Int
-  lastSyncedAt DateTime?
-  trustedFields Json
-  workspace    Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id                 String              @id @default(cuid())
+  workspaceId        String
+  name               String
+  type               KnowledgeSourceType
+  status             String
+  items              Int
+  coverage           Int
+  sourceUrl          String?
+  lastSyncedAt       DateTime?
+  trustedFields      Json
+  knowledgeDocuments KnowledgeDocument[]
+  workspace          Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+}
+
+model KnowledgeDocument {
+  id                String                @id @default(cuid())
+  workspaceId       String
+  knowledgeSourceId String?
+  title             String
+  kind              KnowledgeDocumentKind
+  sourceUrl         String?
+  fileName          String?
+  mimeType          String?
+  checksum          String?
+  rawText           String                @db.LongText
+  metadata          Json?
+  workspace         Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  knowledgeSource   KnowledgeSource?      @relation(fields: [knowledgeSourceId], references: [id], onDelete: Cascade)
+  chunks            KnowledgeChunk[]
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+}
+
+model KnowledgeChunk {
+  id          String            @id @default(cuid())
+  workspaceId String
+  documentId  String
+  chunkIndex  Int
+  content     String            @db.LongText
+  tokenCount  Int
+  keywords    Json
+  workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  document    KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([documentId, chunkIndex], map: "knowledge_chunk_document_index_unique")
 }
 
 model Call {

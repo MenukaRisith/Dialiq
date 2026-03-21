@@ -24,7 +24,9 @@ Dialiq is a Next.js MVP for a voice-first AI agent SaaS for businesses. The prod
 - OpenRouter routed to `gpt-5.4-mini` for grounded response composition
 - ElevenLabs websocket streaming for low-latency voice synthesis
 - Google Calendar OAuth and event creation for booking actions
+- Google Calendar free/busy reads before live slot offers
 - CRM lead capture as the next action layer
+- Knowledge ingestion from website URLs, Markdown files, and PDF uploads
 
 ## Project structure
 
@@ -54,6 +56,7 @@ src/
 - Provider credentials are represented in the admin UI only as masked values with health and rotation metadata.
 - Provider credentials can come from runtime environment variables or encrypted MySQL storage managed in the admin panel.
 - Booking and lead actions are modeled as confirm-first operations with explicit logging.
+- Unstructured knowledge is stored as parsed documents and retrieval chunks so the voice layer can answer from uploaded business material.
 
 ## API routes
 
@@ -113,6 +116,7 @@ Dialiq now includes a MySQL-backed Prisma schema for users, businesses, workspac
 
 Once the database is reachable, the admin providers screen can store encrypted OpenRouter, Twilio, Deepgram, ElevenLabs, Google, and CRM credentials directly in MySQL.
 Google Calendar workspace connections also rely on MySQL so encrypted refresh tokens can be stored safely.
+The knowledge ingestion flow also relies on MySQL because uploaded documents, crawled website pages, and retrieval chunks are persisted there.
 
 ## Environment variables
 
@@ -126,11 +130,12 @@ Copy `.env.example` into `.env.local` and fill in real provider credentials when
 - `GOOGLE_DEFAULT_CALENDAR_ID` defaults to `primary`.
 - Provider credentials can be supplied through env vars, through the internal admin panel once MySQL is configured, or both. Database-managed credentials take precedence over env readiness in operational checks.
 - When you wire production providers, disable mock mode and provide the required Twilio, Deepgram, OpenRouter, and ElevenLabs credentials.
+- After schema changes like the knowledge document/chunk models, run `npm run db:push` before testing uploads or retrieval-backed answers.
 
 ## Next implementation steps
 
 1. Add authentication and tenant-aware session handling.
 2. Persist tenant-specific Twilio number mappings and Google Calendar settings from the business dashboard.
 3. Add realtime interruption controls, silence detection tuning, and transcript replay tooling.
-4. Extend the live integration layer with CRM write adapters and provider-level health polling.
-5. Add background jobs for ingestion, document sync, transcript persistence, provider retries, and webhook replay.
+4. Extend the live integration layer with CRM write adapters, structured product imports, and provider-level health polling.
+5. Add background jobs for recurring website sync, document reprocessing, transcript persistence, provider retries, and webhook replay.

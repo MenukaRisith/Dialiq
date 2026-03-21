@@ -1,10 +1,11 @@
 import { google } from "googleapis";
 
 import { AppError } from "@/lib/api/route-handler";
-import { env } from "@/lib/config/env";
+import { appConfig, env } from "@/lib/config/env";
 import { getGoogleCalendarConnectionByWorkspaceId, saveGoogleCalendarConnection } from "@/lib/repositories/calendar-connections";
 
 const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
+const GOOGLE_API_TIMEOUT_MS = Math.max(appConfig.providerConnectTimeoutMs, 2_500);
 
 function ensureGoogleOAuthConfigured() {
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REDIRECT_URI) {
@@ -23,6 +24,56 @@ function createGoogleOAuthClient() {
     env.GOOGLE_CLIENT_SECRET,
     env.GOOGLE_REDIRECT_URI,
   );
+}
+
+async function withGoogleTimeout<T>(operation: Promise<T>, operationName: string) {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(
+            new AppError(`${operationName} timed out.`, {
+              statusCode: 504,
+              code: "GOOGLE_CALENDAR_TIMEOUT",
+            }),
+          );
+        }, GOOGLE_API_TIMEOUT_MS);
+        timeoutHandle.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
+async function createGoogleCalendarClient(workspaceId: string) {
+  ensureGoogleOAuthConfigured();
+  const connection = await getGoogleCalendarConnectionByWorkspaceId(workspaceId);
+
+  if (!connection) {
+    throw new AppError("Google Calendar is not connected for this workspace.", {
+      statusCode: 503,
+      code: "GOOGLE_CALENDAR_NOT_CONNECTED",
+    });
+  }
+
+  const auth = createGoogleOAuthClient();
+  auth.setCredentials({
+    refresh_token: connection.refreshToken,
+  });
+
+  return {
+    connection,
+    calendar: google.calendar({
+      version: "v3",
+      auth,
+    }),
+  };
 }
 
 export function buildGoogleCalendarConnectUrl(workspaceSlug: string) {
@@ -79,42 +130,26 @@ export async function createGoogleCalendarEvent(input: {
   timezone: string;
   attendeeEmail?: string;
 }) {
-  ensureGoogleOAuthConfigured();
-  const connection = await getGoogleCalendarConnectionByWorkspaceId(input.workspaceId);
-
-  if (!connection) {
-    throw new AppError("Google Calendar is not connected for this workspace.", {
-      statusCode: 503,
-      code: "GOOGLE_CALENDAR_NOT_CONNECTED",
-    });
-  }
-
-  const auth = createGoogleOAuthClient();
-  auth.setCredentials({
-    refresh_token: connection.refreshToken,
-  });
-
-  const calendar = google.calendar({
-    version: "v3",
-    auth,
-  });
-
-  const event = await calendar.events.insert({
-    calendarId: connection.calendarId || "primary",
-    requestBody: {
-      summary: input.summary,
-      description: input.description,
-      start: {
-        dateTime: input.start.toISOString(),
-        timeZone: input.timezone,
+  const { connection, calendar } = await createGoogleCalendarClient(input.workspaceId);
+  const event = await withGoogleTimeout(
+    calendar.events.insert({
+      calendarId: connection.calendarId || "primary",
+      requestBody: {
+        summary: input.summary,
+        description: input.description,
+        start: {
+          dateTime: input.start.toISOString(),
+          timeZone: input.timezone,
+        },
+        end: {
+          dateTime: input.end.toISOString(),
+          timeZone: input.timezone,
+        },
+        attendees: input.attendeeEmail ? [{ email: input.attendeeEmail }] : undefined,
       },
-      end: {
-        dateTime: input.end.toISOString(),
-        timeZone: input.timezone,
-      },
-      attendees: input.attendeeEmail ? [{ email: input.attendeeEmail }] : undefined,
-    },
-  });
+    }),
+    "Google Calendar event creation",
+  );
 
   if (!event.data.id) {
     throw new AppError("Google Calendar did not return an event ID.", {
@@ -124,4 +159,55 @@ export async function createGoogleCalendarEvent(input: {
   }
 
   return event.data;
+}
+
+export interface CalendarSlotCandidate {
+  label: string;
+  start: Date;
+  end: Date;
+}
+
+function overlaps(left: CalendarSlotCandidate, rightStart: Date, rightEnd: Date) {
+  return left.start < rightEnd && left.end > rightStart;
+}
+
+export async function getGoogleCalendarAvailableSlots(input: {
+  workspaceId: string;
+  timezone: string;
+  candidates: CalendarSlotCandidate[];
+}) {
+  if (input.candidates.length === 0) {
+    return [];
+  }
+
+  const { connection, calendar } = await createGoogleCalendarClient(input.workspaceId);
+  const timeMin = new Date(
+    Math.min(...input.candidates.map((candidate) => candidate.start.getTime())),
+  );
+  const timeMax = new Date(
+    Math.max(...input.candidates.map((candidate) => candidate.end.getTime())),
+  );
+  const freeBusy = await withGoogleTimeout(
+    calendar.freebusy.query({
+      requestBody: {
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
+        timeZone: input.timezone,
+        items: [{ id: connection.calendarId || "primary" }],
+      },
+    }),
+    "Google Calendar free/busy read",
+  );
+  const busyWindows =
+    freeBusy.data.calendars?.[connection.calendarId || "primary"]?.busy ?? [];
+
+  return input.candidates.filter((candidate) => {
+    return !busyWindows.some((window) => {
+      if (!window.start || !window.end) {
+        return false;
+      }
+
+      return overlaps(candidate, new Date(window.start), new Date(window.end));
+    });
+  });
 }

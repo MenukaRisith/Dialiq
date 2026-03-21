@@ -32,6 +32,7 @@ import {
   workspaceProfile as mockWorkspaceProfile,
 } from "@/lib/mock-data";
 import { logError } from "@/lib/observability/logger";
+import { listKnowledgeDocuments } from "@/lib/repositories/knowledge-base";
 import type {
   AgentRule,
   AnalyticsBar,
@@ -781,6 +782,7 @@ async function readWorkspaceOperationalData(tenantId = DEFAULT_TENANT_ID): Promi
         coverage: source.coverage,
         lastSynced: source.lastSyncedAt ? formatRelativeTime(source.lastSyncedAt) : "Not synced",
         trustedFields: asStringArray(source.trustedFields),
+        sourceUrl: source.sourceUrl,
       })),
       products: workspace.products.map((product) => ({
         id: product.externalId ?? product.id,
@@ -903,11 +905,13 @@ export async function getWorkspaceOperationalSnapshot(tenantId = DEFAULT_TENANT_
 
 export async function getKnowledgeOperationalSnapshot(tenantId = DEFAULT_TENANT_ID) {
   const data = await readWorkspaceOperationalData(tenantId);
+  const documents = await listKnowledgeDocuments(tenantId);
 
   return {
     sources: data.knowledgeSources,
     products: data.products,
     services: data.services,
+    documents,
   };
 }
 
