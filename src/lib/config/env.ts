@@ -24,7 +24,7 @@ const insecureTwilioSignatureAllowed = readBooleanFlag(
 );
 const databaseTimeoutMs = clampTimeout(
   parsedEnv.DIALIQ_DATABASE_TIMEOUT_MS,
-  1500,
+  5000,
   250,
   10000,
 );

@@ -288,7 +288,7 @@ model CalendarConnection {
   provider             String   @default("google")
   accountEmail         String?
   calendarId           String   @default("primary")
-  encryptedRefreshToken String
+  encryptedRefreshToken String   @db.Text
   scope                Json
   connectedAt          DateTime @default(now())
   lastValidatedAt      DateTime?
@@ -305,7 +305,7 @@ model ProviderCredential {
   environment      String                   @default("Production")
   configKey        String                   @default("DEFAULT")
   purpose          String
-  encryptedValue   String
+  encryptedValue   String                   @db.Text
   maskedValue      String
   isEnabled        Boolean                  @default(true)
   status           ProviderCredentialStatus @default(HEALTHY)
