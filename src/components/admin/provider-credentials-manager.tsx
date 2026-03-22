@@ -4,10 +4,10 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
 import {
-  initialCredentialActionState,
   saveProviderCredentialAction,
   toggleProviderCredentialAction,
 } from "@/app/admin/providers/actions";
+import { initialCredentialActionState } from "@/app/admin/providers/state";
 import { Panel } from "@/components/ui/panel";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {

@@ -12,6 +12,7 @@ import {
   providerCatalog,
   providerFieldCatalog,
 } from "@/lib/provider-catalog";
+import type { CredentialActionState } from "@/app/admin/providers/state";
 
 const providerValues = providerCatalog.map((entry) => entry.value);
 const providerFieldValues = providerFieldCatalog.map((entry) => entry.key);
@@ -41,16 +42,6 @@ const credentialInputSchema = z.object({
   nextRotationAt: z.preprocess(blankToUndefined, z.string().optional()),
   enabled: z.enum(["true", "false"]).default("true"),
 });
-
-export interface CredentialActionState {
-  status: "idle" | "success" | "error";
-  message: string;
-}
-
-export const initialCredentialActionState: CredentialActionState = {
-  status: "idle",
-  message: "",
-};
 
 export async function saveProviderCredentialAction(
   _previousState: CredentialActionState,
