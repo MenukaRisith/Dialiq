@@ -3,26 +3,37 @@ import { google } from "googleapis";
 import { AppError } from "@/lib/api/route-handler";
 import { appConfig, env } from "@/lib/config/env";
 import { getGoogleCalendarConnectionByWorkspaceId, saveGoogleCalendarConnection } from "@/lib/repositories/calendar-connections";
+import { resolveProviderConfigValue } from "@/lib/repositories/provider-credentials";
 
 const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 const GOOGLE_API_TIMEOUT_MS = Math.max(appConfig.providerConnectTimeoutMs, 2_500);
 
-function ensureGoogleOAuthConfigured() {
-  if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REDIRECT_URI) {
+async function getGoogleOAuthConfig() {
+  const clientId = await resolveProviderConfigValue("GOOGLE_CLIENT_ID");
+  const clientSecret = await resolveProviderConfigValue("GOOGLE_CLIENT_SECRET");
+  const redirectUri = await resolveProviderConfigValue("GOOGLE_REDIRECT_URI");
+
+  if (!clientId || !clientSecret || !redirectUri) {
     throw new AppError("Google Calendar OAuth is not configured.", {
       statusCode: 500,
       code: "GOOGLE_OAUTH_NOT_CONFIGURED",
     });
   }
+
+  return {
+    clientId,
+    clientSecret,
+    redirectUri,
+  };
 }
 
-function createGoogleOAuthClient() {
-  ensureGoogleOAuthConfigured();
+async function createGoogleOAuthClient() {
+  const config = await getGoogleOAuthConfig();
 
   return new google.auth.OAuth2(
-    env.GOOGLE_CLIENT_ID,
-    env.GOOGLE_CLIENT_SECRET,
-    env.GOOGLE_REDIRECT_URI,
+    config.clientId,
+    config.clientSecret,
+    config.redirectUri,
   );
 }
 
@@ -52,7 +63,6 @@ async function withGoogleTimeout<T>(operation: Promise<T>, operationName: string
 }
 
 async function createGoogleCalendarClient(workspaceId: string) {
-  ensureGoogleOAuthConfigured();
   const connection = await getGoogleCalendarConnectionByWorkspaceId(workspaceId);
 
   if (!connection) {
@@ -62,7 +72,7 @@ async function createGoogleCalendarClient(workspaceId: string) {
     });
   }
 
-  const auth = createGoogleOAuthClient();
+  const auth = await createGoogleOAuthClient();
   auth.setCredentials({
     refresh_token: connection.refreshToken,
   });
@@ -76,8 +86,8 @@ async function createGoogleCalendarClient(workspaceId: string) {
   };
 }
 
-export function buildGoogleCalendarConnectUrl(workspaceSlug: string) {
-  const auth = createGoogleOAuthClient();
+export async function buildGoogleCalendarConnectUrl(workspaceSlug: string) {
+  const auth = await createGoogleOAuthClient();
 
   return auth.generateAuthUrl({
     access_type: "offline",
@@ -91,7 +101,7 @@ export async function exchangeGoogleCalendarCode(input: {
   workspaceSlug: string;
   code: string;
 }) {
-  const auth = createGoogleOAuthClient();
+  const auth = await createGoogleOAuthClient();
   const tokenResponse = await auth.getToken(input.code);
   const refreshToken = tokenResponse.tokens.refresh_token;
 
@@ -116,7 +126,10 @@ export async function exchangeGoogleCalendarCode(input: {
     workspaceSlug: input.workspaceSlug,
     refreshToken,
     accountEmail: userInfo.data.email ?? null,
-    calendarId: env.GOOGLE_DEFAULT_CALENDAR_ID ?? "primary",
+    calendarId:
+      (await resolveProviderConfigValue("GOOGLE_DEFAULT_CALENDAR_ID")) ??
+      env.GOOGLE_DEFAULT_CALENDAR_ID ??
+      "primary",
     scope: tokenResponse.tokens.scope?.split(" ") ?? [GOOGLE_CALENDAR_SCOPE],
   });
 }

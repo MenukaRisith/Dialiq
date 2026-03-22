@@ -21,13 +21,19 @@ describe("provider credential repository", () => {
 
     expect(dashboard.database.configured).toBe(false);
     expect(
-      dashboard.credentials.find((credential) => credential.provider === "Twilio")?.source,
+      dashboard.credentials.find(
+        (credential) => credential.configKey === "TWILIO_AUTH_TOKEN",
+      )?.source,
     ).toBe("environment");
     expect(
-      dashboard.credentials.find((credential) => credential.provider === "Twilio")?.status,
+      dashboard.credentials.find(
+        (credential) => credential.configKey === "TWILIO_AUTH_TOKEN",
+      )?.status,
     ).toBe("healthy");
     expect(
-      dashboard.credentials.find((credential) => credential.provider === "ElevenLabs")?.status,
+      dashboard.credentials.find(
+        (credential) => credential.configKey === "ELEVENLABS_API_KEY",
+      )?.status,
     ).toBe("warning");
     expect(readiness.find((provider) => provider.key === "openrouter")?.source).toBe(
       "environment",

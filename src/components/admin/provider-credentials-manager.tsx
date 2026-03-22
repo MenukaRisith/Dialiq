@@ -10,7 +10,10 @@ import {
 } from "@/app/admin/providers/actions";
 import { Panel } from "@/components/ui/panel";
 import { StatusBadge } from "@/components/ui/status-badge";
-import { providerCatalog } from "@/lib/provider-catalog";
+import {
+  providerCatalog,
+  providerFieldCatalog,
+} from "@/lib/provider-catalog";
 import type { ProviderCredential } from "@/lib/types";
 
 function SaveButton() {
@@ -22,7 +25,7 @@ function SaveButton() {
       className="rounded-full bg-[var(--foreground)] px-5 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
       disabled={pending}
     >
-      {pending ? "Saving..." : "Save credential"}
+      {pending ? "Saving..." : "Save config"}
     </button>
   );
 }
@@ -64,7 +67,7 @@ export function ProviderCredentialsManager({
                 Credential store
               </p>
               <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
-                Admin-managed provider secrets
+                Admin-managed provider runtime config
               </h2>
             </div>
             <StatusBadge
@@ -85,7 +88,7 @@ export function ProviderCredentialsManager({
             />
           </div>
           <p className="text-sm leading-7 text-[var(--muted-strong)]">
-            Provider credentials now support MySQL persistence. Secrets are encrypted before storage, masked in the UI, and can be enabled or disabled without editing code or env files.
+            Dialiq now stores provider runtime fields in MySQL per config key, so Twilio, Google, OpenRouter, Deepgram, ElevenLabs, and CRM values can be overridden from the admin panel without redeploying the app.
           </p>
           <div className="grid gap-3 md:grid-cols-3">
             <div className="rounded-[20px] bg-white/72 p-4">
@@ -128,7 +131,10 @@ export function ProviderCredentialsManager({
                   <p className="text-lg font-semibold tracking-[-0.03em] text-[var(--foreground)]">
                     {credential.provider}
                   </p>
-                  <p className="mt-1 text-sm text-[var(--muted)]">{credential.purpose}</p>
+                  <p className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-[var(--muted)]">
+                    {credential.configKey}
+                  </p>
+                  <p className="mt-2 text-sm text-[var(--muted)]">{credential.purpose}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <StatusBadge status={credential.status} />
@@ -199,10 +205,10 @@ export function ProviderCredentialsManager({
       <Panel className="space-y-5">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
-            Save or rotate a credential
+            Save or rotate provider config
           </p>
           <h2 className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-[var(--foreground)]">
-            Update providers from the admin panel
+            Update env-style provider values from the admin panel
           </h2>
         </div>
 
@@ -224,6 +230,21 @@ export function ProviderCredentialsManager({
             </label>
 
             <label className="space-y-2 text-sm font-medium text-[var(--foreground)]">
+              <span>Config key</span>
+              <select
+                name="configKey"
+                className="w-full rounded-[18px] border border-[color:var(--border)] bg-white/80 px-4 py-3 text-sm outline-none"
+                defaultValue="OPENROUTER_API_KEY"
+              >
+                {providerFieldCatalog.map((field) => (
+                  <option key={field.key} value={field.key}>
+                    {field.providerLabel} • {field.key}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-2 text-sm font-medium text-[var(--foreground)]">
               <span>Environment</span>
               <input
                 name="environment"
@@ -236,15 +257,15 @@ export function ProviderCredentialsManager({
               <span>Purpose</span>
               <input
                 name="purpose"
-                placeholder="Optional. Defaults to the provider purpose."
+                placeholder="Optional. Defaults to the config field purpose."
                 className="w-full rounded-[18px] border border-[color:var(--border)] bg-white/80 px-4 py-3 text-sm outline-none"
               />
             </label>
 
             <label className="space-y-2 text-sm font-medium text-[var(--foreground)]">
-              <span>Secret value</span>
+              <span>Value</span>
               <input
-                name="secret"
+                name="value"
                 type="password"
                 placeholder="Leave blank to keep the current stored value"
                 className="w-full rounded-[18px] border border-[color:var(--border)] bg-white/80 px-4 py-3 text-sm outline-none"
@@ -281,7 +302,7 @@ export function ProviderCredentialsManager({
 
           <div className="flex items-center justify-between gap-4">
             <p className="max-w-sm text-xs leading-6 text-[var(--muted)]">
-              Secrets are encrypted before being written to MySQL. Raw values are never rendered back into the admin UI, and database credentials take precedence over env-based fallbacks.
+              Stored values are encrypted before they hit MySQL, never rendered back raw in the UI, and take precedence over env-based runtime fallbacks. Host bootstrap values like `DATABASE_URL` and `APP_ENCRYPTION_KEY` still stay outside the admin panel.
             </p>
             <SaveButton />
           </div>

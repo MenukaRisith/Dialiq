@@ -86,7 +86,7 @@ export const POST = createRouteHandler(
     const params = toObject(formData);
     const signature = request.headers.get("x-twilio-signature");
 
-    if (!validateTwilioHttpRequest(request.url, signature, params)) {
+    if (!(await validateTwilioHttpRequest(request.url, signature, params))) {
       throw new AppError("Twilio signature validation failed.", {
         statusCode: 401,
         code: "TWILIO_SIGNATURE_INVALID",

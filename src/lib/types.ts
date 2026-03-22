@@ -198,13 +198,14 @@ export interface AgentRule {
 export interface ProviderCredential {
   id: string;
   provider: string;
+  configKey: string;
   purpose: string;
   status: HealthStatus;
   maskedValue: string;
   environment: string;
   lastValidated: string;
   nextRotation: string;
-  source?: "database" | "environment" | "mock";
+  source?: "database" | "environment" | "mock" | "mixed";
   isEnabled?: boolean;
   validationMessage?: string | null;
 }

@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
 
-import { appConfig, env } from "@/lib/config/env";
+import { appConfig } from "@/lib/config/env";
 import { logError, logWarn } from "@/lib/observability/logger";
+import { resolveProviderConfigValue } from "@/lib/repositories/provider-credentials";
 import WebSocket from "ws";
 
 interface DeepgramResultMessage {
@@ -28,8 +29,10 @@ export class DeepgramLiveTranscriber extends EventEmitter<DeepgramLiveTranscribe
   private pendingAudio: Buffer[] = [];
   private connectTimeout?: NodeJS.Timeout;
 
-  connect() {
-    if (!env.DEEPGRAM_API_KEY) {
+  async connect() {
+    const apiKey = await resolveProviderConfigValue("DEEPGRAM_API_KEY");
+
+    if (!apiKey) {
       throw new Error("DEEPGRAM_API_KEY is required for realtime transcription.");
     }
 
@@ -45,7 +48,7 @@ export class DeepgramLiveTranscriber extends EventEmitter<DeepgramLiveTranscribe
 
     this.socket = new WebSocket(url, {
       headers: {
-        Authorization: `Token ${env.DEEPGRAM_API_KEY}`,
+        Authorization: `Token ${apiKey}`,
       },
     });
 

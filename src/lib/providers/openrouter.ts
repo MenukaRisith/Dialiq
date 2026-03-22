@@ -1,5 +1,6 @@
 import { appConfig, env } from "@/lib/config/env";
 import { logError } from "@/lib/observability/logger";
+import { resolveProviderConfigValue } from "@/lib/repositories/provider-credentials";
 import type { TranscriptTurn, VoiceCallMatch } from "@/lib/types";
 
 interface ComposeGroundedVoiceReplyInput {
@@ -44,7 +45,13 @@ function readContent(content: OpenRouterMessageContent) {
 export async function composeGroundedVoiceReply(
   input: ComposeGroundedVoiceReplyInput,
 ) {
-  if (!env.OPENROUTER_API_KEY) {
+  const apiKey = await resolveProviderConfigValue("OPENROUTER_API_KEY");
+  const model =
+    (await resolveProviderConfigValue("OPENROUTER_MODEL")) ??
+    env.OPENROUTER_MODEL ??
+    "openai/gpt-5.4-mini";
+
+  if (!apiKey) {
     return input.fallbackResponse;
   }
 
@@ -55,13 +62,13 @@ export async function composeGroundedVoiceReply(
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${env.OPENROUTER_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         "HTTP-Referer": appConfig.url.toString(),
         "X-Title": appConfig.name,
       },
       body: JSON.stringify({
-        model: env.OPENROUTER_MODEL ?? "openai/gpt-5.4-mini",
+        model,
         temperature: 0.15,
         max_tokens: 140,
         messages: [

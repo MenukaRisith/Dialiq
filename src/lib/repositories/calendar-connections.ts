@@ -6,6 +6,7 @@ import {
   withDatabaseTimeout,
 } from "@/lib/db/prisma";
 import { logError } from "@/lib/observability/logger";
+import { resolveProviderConfigValue } from "@/lib/repositories/provider-credentials";
 import { decryptSecret, encryptSecret } from "@/lib/security/encryption";
 
 export interface GoogleCalendarConnection {
@@ -68,6 +69,10 @@ export async function saveGoogleCalendarConnection(input: {
   ensureDatabaseReady();
   const prisma = getPrismaClient();
   const workspace = await resolveWorkspaceBySlug(input.workspaceSlug);
+  const defaultCalendarId =
+    (await resolveProviderConfigValue("GOOGLE_DEFAULT_CALENDAR_ID")) ??
+    env.GOOGLE_DEFAULT_CALENDAR_ID ??
+    "primary";
 
   return withDatabaseTimeout(
     prisma.calendarConnection.upsert({
@@ -79,7 +84,7 @@ export async function saveGoogleCalendarConnection(input: {
       },
       update: {
         accountEmail: input.accountEmail ?? null,
-        calendarId: input.calendarId ?? env.GOOGLE_DEFAULT_CALENDAR_ID ?? "primary",
+        calendarId: input.calendarId ?? defaultCalendarId,
         encryptedRefreshToken: encryptSecret(input.refreshToken),
         scope: input.scope,
         lastValidatedAt: new Date(),
@@ -89,7 +94,7 @@ export async function saveGoogleCalendarConnection(input: {
         workspaceId: workspace.id,
         provider: "google",
         accountEmail: input.accountEmail ?? null,
-        calendarId: input.calendarId ?? env.GOOGLE_DEFAULT_CALENDAR_ID ?? "primary",
+        calendarId: input.calendarId ?? defaultCalendarId,
         encryptedRefreshToken: encryptSecret(input.refreshToken),
         scope: input.scope,
         lastValidatedAt: new Date(),

@@ -623,6 +623,7 @@ export const providerCredentials: ProviderCredential[] = [
   {
     id: "PV-01",
     provider: "OpenRouter",
+    configKey: "OPENROUTER_API_KEY",
     purpose: "LLM routing for gpt-5.4-mini",
     status: "healthy",
     maskedValue: "or-v1-****************8c1a",
@@ -633,6 +634,7 @@ export const providerCredentials: ProviderCredential[] = [
   {
     id: "PV-02",
     provider: "Deepgram",
+    configKey: "DEEPGRAM_API_KEY",
     purpose: "Flux streaming speech-to-text",
     status: "healthy",
     maskedValue: "dg_******************91f2",
@@ -643,6 +645,7 @@ export const providerCredentials: ProviderCredential[] = [
   {
     id: "PV-03",
     provider: "ElevenLabs",
+    configKey: "ELEVENLABS_API_KEY",
     purpose: "Voice synthesis for answer playback",
     status: "healthy",
     maskedValue: "xi_*******************02ab",
@@ -653,6 +656,7 @@ export const providerCredentials: ProviderCredential[] = [
   {
     id: "PV-04",
     provider: "Twilio",
+    configKey: "TWILIO_ACCOUNT_SID",
     purpose: "Inbound telephony and WhatsApp calling",
     status: "healthy",
     maskedValue: "AC***********************47",
@@ -663,6 +667,7 @@ export const providerCredentials: ProviderCredential[] = [
   {
     id: "PV-05",
     provider: "Google",
+    configKey: "GOOGLE_CLIENT_ID",
     purpose: "Calendar OAuth and booking actions",
     status: "warning",
     maskedValue: "oauth-*****************9bb3",
@@ -673,6 +678,7 @@ export const providerCredentials: ProviderCredential[] = [
   {
     id: "PV-06",
     provider: "HubSpot",
+    configKey: "CRM_API_KEY",
     purpose: "Lead and CRM sync",
     status: "warning",
     maskedValue: "pat-*******************441e",

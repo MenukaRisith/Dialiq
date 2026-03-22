@@ -15,6 +15,6 @@ export const GET = createRouteHandler(
       });
     }
 
-    return Response.redirect(buildGoogleCalendarConnectUrl(workspaceSlug), 302);
+    return Response.redirect(await buildGoogleCalendarConnectUrl(workspaceSlug), 302);
   },
 );

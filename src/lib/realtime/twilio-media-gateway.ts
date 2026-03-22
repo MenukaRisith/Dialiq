@@ -114,7 +114,7 @@ class TwilioRealtimeSession {
 
     switch (message.event) {
       case "start":
-        this.handleStart(message as TwilioStartMessage);
+        void this.handleStart(message as TwilioStartMessage);
         break;
       case "media":
         this.handleMedia(message as TwilioMediaMessage);
@@ -130,7 +130,7 @@ class TwilioRealtimeSession {
     }
   }
 
-  private handleStart(message: TwilioStartMessage) {
+  private async handleStart(message: TwilioStartMessage) {
     this.streamSid = message.streamSid;
     this.callSid = message.start.callSid;
     this.tenantId = message.start.customParameters?.tenantId ?? DEFAULT_TENANT_ID;
@@ -140,7 +140,16 @@ class TwilioRealtimeSession {
         ? "whatsapp-voice"
         : "phone";
 
-    this.deepgram.connect();
+    try {
+      await this.deepgram.connect();
+    } catch (error) {
+      logError("twilio.gateway.deepgram_connect_failed", error, {
+        callSid: this.callSid,
+        tenantId: this.tenantId,
+      });
+      this.close();
+      return;
+    }
 
     logInfo("twilio.gateway.session_started", {
       streamSid: this.streamSid,
@@ -297,7 +306,7 @@ export function createTwilioMediaGateway() {
       const normalizedSignature = Array.isArray(signature) ? signature[0] : signature;
       const requestUrl = new URL(req.url ?? "/realtime/twilio", appConfig.url).toString();
 
-      if (!validateTwilioWebSocketRequest(requestUrl, normalizedSignature)) {
+      if (!(await validateTwilioWebSocketRequest(requestUrl, normalizedSignature))) {
         logWarn("twilio.gateway.invalid_signature", {
           requestUrl,
         });

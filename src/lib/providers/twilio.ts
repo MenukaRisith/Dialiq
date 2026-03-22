@@ -1,5 +1,6 @@
-import { appConfig, env } from "@/lib/config/env";
+import { appConfig } from "@/lib/config/env";
 import { logWarn } from "@/lib/observability/logger";
+import { resolveProviderConfigValue } from "@/lib/repositories/provider-credentials";
 import twilio from "twilio";
 
 export interface TwilioInboundCallContext {
@@ -41,12 +42,18 @@ export function buildTwilioStreamResponse(context: TwilioInboundCallContext) {
   return response.toString();
 }
 
-function shouldBypassSignatureValidation() {
-  return appConfig.isInsecureTwilioSignatureAllowed || !env.TWILIO_AUTH_TOKEN;
+async function getTwilioAuthToken() {
+  return resolveProviderConfigValue("TWILIO_AUTH_TOKEN");
 }
 
-export function validateTwilioHttpRequest(requestUrl: string, signature: string | null, params: Record<string, string>) {
-  if (shouldBypassSignatureValidation()) {
+export async function validateTwilioHttpRequest(
+  requestUrl: string,
+  signature: string | null,
+  params: Record<string, string>,
+) {
+  const authToken = await getTwilioAuthToken();
+
+  if (appConfig.isInsecureTwilioSignatureAllowed || !authToken) {
     if (!signature) {
       logWarn("twilio.signature.skipped", {
         reason: "insecure_mode_or_missing_auth_token",
@@ -60,15 +67,16 @@ export function validateTwilioHttpRequest(requestUrl: string, signature: string 
     return false;
   }
 
-  if (!env.TWILIO_AUTH_TOKEN) {
-    return false;
-  }
-
-  return twilio.validateRequest(env.TWILIO_AUTH_TOKEN, signature, requestUrl, params);
+  return twilio.validateRequest(authToken, signature, requestUrl, params);
 }
 
-export function validateTwilioWebSocketRequest(requestUrl: string, signature: string | undefined) {
-  if (shouldBypassSignatureValidation()) {
+export async function validateTwilioWebSocketRequest(
+  requestUrl: string,
+  signature: string | undefined,
+) {
+  const authToken = await getTwilioAuthToken();
+
+  if (appConfig.isInsecureTwilioSignatureAllowed || !authToken) {
     if (!signature) {
       logWarn("twilio.websocket_signature.skipped", {
         reason: "insecure_mode_or_missing_auth_token",
@@ -82,9 +90,5 @@ export function validateTwilioWebSocketRequest(requestUrl: string, signature: st
     return false;
   }
 
-  if (!env.TWILIO_AUTH_TOKEN) {
-    return false;
-  }
-
-  return twilio.validateRequest(env.TWILIO_AUTH_TOKEN, signature, requestUrl, {});
+  return twilio.validateRequest(authToken, signature, requestUrl, {});
 }

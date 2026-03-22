@@ -78,7 +78,9 @@ model User {
   id        String   @id @default(cuid())
   email     String   @unique
   name      String?
+  passwordHash String?
   role      String   @default("ADMIN")
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -301,6 +303,7 @@ model ProviderCredential {
   id               String                   @id @default(cuid())
   provider         CredentialProvider
   environment      String                   @default("Production")
+  configKey        String                   @default("DEFAULT")
   purpose          String
   encryptedValue   String
   maskedValue      String
@@ -314,7 +317,7 @@ model ProviderCredential {
   updatedAt        DateTime                 @updatedAt
   auditLogs        AuditLog[]
 
-  @@unique([provider, environment], map: "provider_environment_unique")
+  @@unique([provider, environment, configKey], map: "provider_environment_config_key_unique")
 }
 
 model FeatureFlag {

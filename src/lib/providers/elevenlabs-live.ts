@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 
 import { appConfig, env } from "@/lib/config/env";
 import { logError, logWarn } from "@/lib/observability/logger";
+import { resolveProviderConfigValue } from "@/lib/repositories/provider-credentials";
 import WebSocket from "ws";
 
 export interface ElevenLabsStreamerEvents {
@@ -20,12 +21,19 @@ export class ElevenLabsRealtimeStreamer extends EventEmitter<ElevenLabsStreamerE
   private connectTimeout?: NodeJS.Timeout;
 
   async speak(text: string) {
-    if (!env.ELEVENLABS_API_KEY) {
+    const apiKey = await resolveProviderConfigValue("ELEVENLABS_API_KEY");
+    const voiceId =
+      (await resolveProviderConfigValue("ELEVENLABS_VOICE_ID")) ??
+      env.ELEVENLABS_VOICE_ID ??
+      "EXAVITQu4vr4xnSDxMaL";
+    const modelId =
+      (await resolveProviderConfigValue("ELEVENLABS_MODEL_ID")) ??
+      env.ELEVENLABS_MODEL_ID ??
+      "eleven_flash_v2_5";
+
+    if (!apiKey) {
       throw new Error("ELEVENLABS_API_KEY is required for realtime synthesis.");
     }
-
-    const voiceId = env.ELEVENLABS_VOICE_ID ?? "EXAVITQu4vr4xnSDxMaL";
-    const modelId = env.ELEVENLABS_MODEL_ID ?? "eleven_flash_v2_5";
 
     const url = new URL(
       `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input`,
@@ -37,7 +45,7 @@ export class ElevenLabsRealtimeStreamer extends EventEmitter<ElevenLabsStreamerE
 
     this.socket = new WebSocket(url, {
       headers: {
-        "xi-api-key": env.ELEVENLABS_API_KEY,
+        "xi-api-key": apiKey,
       },
     });
 
